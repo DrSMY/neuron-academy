@@ -1,0 +1,14 @@
+{
+  "name": "neuron-academy",
+  "version": "1.0.0",
+  "description": "Self-hosted learning platform — subjects, tracks, interactive modules, per-user pricing. Zero dependencies.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}

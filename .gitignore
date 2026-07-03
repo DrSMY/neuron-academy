@@ -1,0 +1,12 @@
+# local database (contains user accounts and progress — never commit)
+platform.db
+platform.db-shm
+platform.db-wal
+
+# environment / secrets
+.env
+.env.*
+
+# OS noise
+.DS_Store
+node_modules/

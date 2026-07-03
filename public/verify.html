@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Verify certificate — Neuron Academy</title>
+  <script>
+    (function () {
+      var t = localStorage.getItem('na-theme');
+      if (t !== 'light' && t !== 'dark') t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      document.documentElement.dataset.theme = t;
+    })();
+  </script>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="ambient" aria-hidden="true"><div class="blob blob-1"></div><div class="blob blob-2"></div></div>
+  <div class="auth-wrap">
+    <div class="card auth-card" style="max-width:480px">
+      <div class="brand" style="justify-content:center;margin-bottom:6px">
+        <span class="logo"><svg viewBox="0 0 48 48" aria-hidden="true"><defs><linearGradient id="nlg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><rect width="48" height="48" rx="13" fill="url(#nlg)"/><g stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.9"><path d="M24 24 14 15.5M24 24l10.5-9M24 24l9 10M24 24l-9.5 9.5M24 24V13"/></g><circle cx="24" cy="24" r="4.2" fill="#fff"/><circle cx="14" cy="15.5" r="2.6" fill="#fff"/><circle cx="34.5" cy="15" r="3.2" fill="#67e8f9"/><circle cx="33" cy="34" r="2.8" fill="#fff" opacity="0.9"/><circle cx="14.5" cy="33.5" r="2.2" fill="#fff" opacity="0.75"/><circle cx="24" cy="13" r="2.4" fill="#fff" opacity="0.85"/></svg></span>
+        Neuron Academy
+      </div>
+      <p class="tagline">Certificate verification</p>
+      <form id="verify-form" novalidate>
+        <div class="field">
+          <label for="v-code">Certificate number</label>
+          <input id="v-code" placeholder="NA-XXXXXXXXXX" autocomplete="off">
+        </div>
+        <button class="btn btn-primary" style="width:100%" type="submit">Verify</button>
+      </form>
+      <div id="verify-result" style="margin-top:20px"></div>
+      <p class="auth-note"><a href="/" style="color:var(--accent-bright)">Back to Neuron Academy</a></p>
+    </div>
+  </div>
+  <script>
+    const form = document.getElementById('verify-form');
+    const input = document.getElementById('v-code');
+    const out = document.getElementById('verify-result');
+    async function check(code) {
+      out.innerHTML = '<p style="color:var(--fg-muted);font-size:14px">Checking…</p>';
+      try {
+        const res = await fetch('/api/verify/' + encodeURIComponent(code.trim()));
+        const d = await res.json();
+        if (!d.valid) {
+          out.innerHTML = '<div class="form-error show">✕ &nbsp;' + (d.error || 'Invalid certificate code.') + '</div>';
+          return;
+        }
+        out.innerHTML = `
+          <div class="score-banner pass" style="display:block;padding:18px 22px">
+            <strong style="color:var(--success)">✓ Valid certificate</strong>
+            <p style="margin:10px 0 0;color:var(--fg)"><strong>${d.name}</strong> completed<br>
+            <span style="color:var(--accent-bright)">${d.module}</span></p>
+            <p style="margin:8px 0 0;font-size:13px;color:var(--fg-muted)">Issued ${d.issued_at} · ${d.code}</p>
+          </div>`;
+      } catch {
+        out.innerHTML = '<div class="form-error show">Something went wrong — try again.</div>';
+      }
+    }
+    form.onsubmit = (e) => { e.preventDefault(); if (input.value.trim()) check(input.value); };
+    const qs = new URLSearchParams(location.search).get('code');
+    if (qs) { input.value = qs; check(qs); }
+  </script>
+</body>
+</html>
