@@ -915,13 +915,30 @@ function normalizeImport(kind, parsed) {
   }
 
   if (kind === 'cards') {
+    // Recognise common export naming (Anki/Notion/NotebookLM etc all differ)
+    // so admins never have to reshape a file before importing it.
+    const FRONT_KEYS = ['front', 'term', 'question', 'prompt', 'q', 'name'];
+    const BACK_KEYS = ['back', 'definition', 'answer', 'response', 'a', 'meaning'];
     let rows;
     if (isTable) {
       const { headers, objects } = tableToObjects(parsed);
-      rows = headers.includes('front') && headers.includes('back')
-        ? objects.map((o) => ({ front: o.front, back: o.back }))
+      const frontCol = headers.find((h) => FRONT_KEYS.includes(h));
+      const backCol = headers.find((h) => BACK_KEYS.includes(h) && h !== frontCol);
+      // Only treat row 1 as a header when BOTH columns are recognised — a
+      // file with no header at all (very common when exported from other
+      // tools) falls through and every row, including the first, is kept.
+      rows = (frontCol && backCol)
+        ? objects.map((o) => ({ front: o[frontCol], back: o[backCol] }))
         : parsed.map((r) => ({ front: (r[0] || '').toString().trim(), back: (r[1] || '').toString().trim() }));
-    } else rows = list.map((o) => ({ front: (o.front || '').toString().trim(), back: (o.back || '').toString().trim() }));
+    } else {
+      rows = list.map((o) => {
+        const lower = {};
+        for (const k of Object.keys(o)) lower[k.toLowerCase()] = o[k];
+        const frontKey = FRONT_KEYS.find((k) => lower[k] !== undefined);
+        const backKey = BACK_KEYS.find((k) => lower[k] !== undefined);
+        return { front: (lower[frontKey] ?? '').toString().trim(), back: (lower[backKey] ?? '').toString().trim() };
+      });
+    }
     rows.forEach((r, i) => {
       if (!r.front || !r.back) { errors.push(`Row ${i + 1}: needs both front and back.`); return; }
       items.push(r);

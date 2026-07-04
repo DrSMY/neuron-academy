@@ -1010,6 +1010,17 @@ mark.hl { background: rgba(251, 191, 36, 0.25); color: inherit; border-radius: 3
 .palette-foot { display: flex; gap: 18px; padding: 10px 18px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--fg-faint); }
 
 /* ---------- imports & assignments ---------- */
+.import-steps { margin: 0 0 16px 20px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.import-steps li { font-size: 13.5px; color: var(--fg-muted); line-height: 1.5; }
+.import-steps strong { color: var(--fg); }
+.sample-link {
+  display: inline-flex; align-items: center; gap: 8px; margin-top: 10px; padding: 8px 4px;
+  color: var(--accent-bright); text-decoration: none; font-size: 13px; font-weight: 600;
+  border-top: 1px dashed var(--border); padding-top: 12px; width: 100%;
+}
+.sample-link svg { width: 15px; height: 15px; stroke: currentColor; flex: none; }
+.sample-link span { color: var(--fg-faint); font-weight: 400; }
+.sample-link:hover { text-decoration: underline; }
 .import-help {
   padding: 14px 16px; border-radius: var(--radius-sm); margin-bottom: 16px;
   background: var(--well-bg); border: 1px solid var(--border); font-size: 13.5px; color: var(--fg-muted);
@@ -1017,7 +1028,7 @@ mark.hl { background: rgba(251, 191, 36, 0.25); color: inherit; border-radius: 3
 .import-help p { margin-bottom: 6px; }
 .import-help code {
   background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px;
-  padding: 2px 7px; font-size: 12px; color: var(--accent-bright); word-break: break-all;
+  padding: 2px 7px; font-size: 12px; color: var(--accent-bright); overflow-wrap: break-word;
 }
 .import-drop {
   display: flex; flex-direction: column; align-items: center; gap: 6px;

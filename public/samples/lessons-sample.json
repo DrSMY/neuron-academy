@@ -1,0 +1,18 @@
+[
+  {
+    "title": "Getting Started",
+    "blocks": [
+      { "type": "text", "html": "<h3>Welcome</h3><p>This is a plain <strong>text block</strong> — write any HTML you like: paragraphs, lists, bold, italics.</p>" },
+      { "type": "video", "url": "https://www.youtube.com/embed/dQw4w9WgXcQ" }
+    ]
+  },
+  {
+    "title": "Check Your Understanding",
+    "blocks": [
+      { "type": "text", "html": "<p>Interactive blocks make learners prove they understood the lesson before continuing.</p>" },
+      { "type": "blank", "prompt": "Fill in the blank", "text": "The capital of France is {{Paris}}." },
+      { "type": "order", "prompt": "Put the steps in order", "items": ["Read the material", "Practice with examples", "Take the quiz"] },
+      { "type": "match", "prompt": "Match the pairs", "pairs": [{ "l": "H2O", "r": "Water" }, { "l": "NaCl", "r": "Salt" }] }
+    ]
+  }
+]

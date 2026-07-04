@@ -49,11 +49,13 @@ Content is organised as **Subjects → Tracks → Modules → Lessons**:
 ## Bulk import & assignments
 
 - **Import anything from files** — every content section in the module editor (Lessons, Quiz questions, Flashcards, Assignments) has an *Import* button accepting **JSON, CSV, or Excel (.xlsx)** via a drag-and-drop zone. Parsers are zero-dependency (hand-rolled CSV state machine and a minimal xlsx reader in `server.js`). Videos remain URL-only by design — paste an embed URL in a video block.
-  - Flashcards: columns `front, back` (header optional)
+  - Flashcards: `front, back` columns — also recognises `question/answer`, `term/definition`, `prompt/response` headers, and **works with no header row at all** (every row becomes a card, so files exported straight from Anki, Notion, or NotebookLM just work).
   - Questions: `question, correct, option1…optionN` — `correct` is the option number or its exact text; JSON uses `{question, options[], correct_index}`
   - Lessons: `title, content` (+optional `video`) for spreadsheets; JSON supports full interactive blocks
   - Assignments: `title, instructions` (+optional `points`)
+  - Each import modal shows the exact column/JSON shape expected, numbered steps, and a **"Download sample file"** link with real working content for that type (`public/samples/`) — open it, copy the shape, or import it as-is to see the feature work immediately.
   - Skipped rows are reported with reasons; imports append after existing content.
+  - **Live example**: the *Health & Wellness → Peptide Therapy → BPC-157 Recovery Protocol* module (free) was built entirely by importing a real 56-question CSV with no header row — open it in the admin panel to see a working import in place, or check My Learning / Review as a learner.
 - **Assignments** — admin creates them per module (or imports them); learners see them in the module contents between lessons and the quiz, write an answer, optionally attach a file (≤5 MB, stored in SQLite), and can resubmit until graded (+20 XP on first submit). Admin grades from the **Submissions** inbox (view text, download file, score + feedback); grading locks the learner's submission and shows them the feedback. Assignments don't gate module completion.
 
 ## Admin features (`/admin`)

@@ -705,25 +705,33 @@ const IMPORT_SPECS = {
     label: 'flashcards',
     columns: 'front, back',
     json: '[{ "front": "Term", "back": "Definition" }]',
-    note: 'Two columns — front and back. Files without a header row also work (column 1 = front, column 2 = back).',
+    note: 'Also recognises question/answer, term/definition, and prompt/response headers. No header row at all? No problem — every row is imported as a card, in order. Any two-column file works.',
+    sample: 'flashcards-sample.csv',
+    sampleDesc: 'real 56-card set (medical training Q&A)',
   },
   questions: {
     label: 'quiz questions',
     columns: 'question, correct, option1, option2, option3…',
     json: '[{ "question": "…", "options": ["A", "B", "C"], "correct_index": 0 }]',
     note: '"correct" is the option number (1, 2, 3…) or the exact text of the right option. Imported questions join this module\'s question bank.',
+    sample: 'questions-sample.csv',
+    sampleDesc: '3 example multiple-choice questions',
   },
   lessons: {
     label: 'lessons',
     columns: 'title, content (optional: video)',
     json: '[{ "title": "…", "blocks": [{ "type": "text", "html": "<p>…</p>" }] }]',
     note: 'Spreadsheets create text lessons (plain text is wrapped into paragraphs; a video column adds an embedded video). JSON supports every block type: text, video, code, order, match, blank.',
+    sample: 'lessons-sample.json',
+    sampleDesc: '2 lessons showing every block type',
   },
   assignments: {
     label: 'assignments',
     columns: 'title, instructions (optional: points)',
     json: '[{ "title": "…", "instructions": "What to do", "points": 100 }]',
     note: 'Points default to 100 when omitted.',
+    sample: 'assignments-sample.csv',
+    sampleDesc: '2 example assignments',
   },
 };
 
@@ -734,10 +742,16 @@ function importModal(moduleId, kind) {
       <div><h3>Import ${spec.label}</h3><div class="sub">JSON, CSV, or Excel (.xlsx) — dropped straight into this module.</div></div>
       <button class="icon-btn" data-close aria-label="Close">${icon('x')}</button>
     </div>
+    <ol class="import-steps">
+      <li>Export or save your ${spec.label} as a <strong>.json</strong>, <strong>.csv</strong>, or <strong>.xlsx</strong> file — one row per item, or use the sample below as a starting point.</li>
+      <li>Drop the file below (or click to choose it).</li>
+      <li>Review the result — anything skipped is listed with the reason so you can fix and re-import just those rows.</li>
+    </ol>
     <div class="import-help">
       <p><strong>Spreadsheet / CSV columns:</strong> <code>${esc(spec.columns)}</code></p>
       <p><strong>JSON shape:</strong> <code>${esc(spec.json)}</code></p>
       <p class="drag-hint">${spec.note}</p>
+      <a class="sample-link" href="/samples/${spec.sample}" download>${icon('file')} Download sample file <span>— ${esc(spec.sampleDesc)}</span></a>
     </div>
     <label class="import-drop" id="import-drop">
       ${icon('upload')}
