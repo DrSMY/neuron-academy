@@ -19,6 +19,16 @@ node server.js
 
 Data lives in `platform.db` next to the server; delete it to reset to seed data. Schema migrations run automatically on startup.
 
+## Roles: admin vs. teacher
+
+Three roles: `learner`, `teacher`, `admin`.
+
+- **Admin**: everything — Overview, Users & Pricing (including granting teacher/admin roles and setting a person's designation), Analytics, plus full content authoring.
+- **Teacher**: content authoring only — Catalog (subjects, tracks, modules, lessons, quiz, flashcards, assignments, imports) and the Submissions inbox for grading. No access to Overview, Users & Pricing, or Analytics (enforced server-side, not just hidden in the UI).
+- **Learner**: the student experience (Home, Explore, My Learning, Review).
+
+Admin grants teacher access from **Users & Pricing → Role**: pick a role and set a **designation** (e.g. "PhD, Physiotherapy"). Every lesson, assignment, flashcard, and quiz question a teacher or admin creates — whether typed by hand or imported from a file — is automatically signed with their name and designation. Learners see "Written by {name}, {designation}" on lessons and "Set by {name}, {designation}" on assignments; admins/teachers see the same byline (plus on flashcards/quiz questions as a hover tooltip) in the module editor. Demo account: `teacher@platform.ai` / `teacher123`.
+
 ## Catalog structure
 
 Content is organised as **Subjects → Tracks → Modules → Lessons**:
@@ -27,6 +37,13 @@ Content is organised as **Subjects → Tracks → Modules → Lessons**:
 - **Sequential unlocking is per track** — finishing module 1 of a track unlocks module 2 of that track; other tracks are independent.
 - Learners browse via **Explore** (subject cards) → subject page (each track drawn as its own neural path).
 - Admin manages the whole tree in **Catalog** (subjects & tracks CRUD; every module is assigned to a track). Subjects/tracks have their own publish toggles; a module is only visible when its module, track and subject are all published.
+
+## Learner navigation — what each page is for
+
+- **Home**: dashboard — streak, XP/level, activity heatmap, badges, and a "continue where you left off" hero.
+- **Explore**: discovery only — browse subjects and tracks, see what's available, enroll in something new. Already-owned modules show their state but the page is oriented around finding and adding new material.
+- **My Learning**: your enrolled work, grouped into *Continue learning* (in progress), *Up next — locked* (owned but waiting on a prerequisite), and *Completed* (with certificates).
+- **Review**: recap and daily practice — leads with a "Continue: {module}" card pointing at your current lesson target, a *Recently completed* strip of past modules, then the spaced-repetition flashcard queue.
 
 ## Learner features
 
@@ -54,6 +71,7 @@ Content is organised as **Subjects → Tracks → Modules → Lessons**:
   - Lessons: `title, content` (+optional `video`) for spreadsheets; JSON supports full interactive blocks
   - Assignments: `title, instructions` (+optional `points`)
   - Each import modal shows the exact column/JSON shape expected, numbered steps, and a **"Download sample file"** link with real working content for that type (`public/samples/`) — open it, copy the shape, or import it as-is to see the feature work immediately.
+  - The **lessons** import modal additionally shows a **block type reference**: a standalone JSON snippet for each of rich HTML text, video, put-in-order, match pairs, fill-in-the-blank, and code playground — copy the one you need straight into your `blocks` array.
   - Skipped rows are reported with reasons; imports append after existing content.
   - **Live example**: the *Health & Wellness → Peptide Therapy → BPC-157 Recovery Protocol* module (free) was built entirely by importing a real 56-question CSV with no header row — open it in the admin panel to see a working import in place, or check My Learning / Review as a learner.
 - **Assignments** — admin creates them per module (or imports them); learners see them in the module contents between lessons and the quiz, write an answer, optionally attach a file (≤5 MB, stored in SQLite), and can resubmit until graded (+20 XP on first submit). Admin grades from the **Submissions** inbox (view text, download file, score + feedback); grading locks the learner's submission and shows them the feedback. Assignments don't gate module completion.

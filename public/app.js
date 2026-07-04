@@ -30,6 +30,7 @@ const ICONS = {
   bot: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V4m0 0h3M9 19v2m6-2v2"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/></svg>',
   file: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2.5h8L19 7.5V20a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 20V4A1.5 1.5 0 0 1 6.5 2.5z"/><path d="M14 2.5v5h5"/></svg>',
   clipboard: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4a2 2 0 0 1 6 0M9 11h6M9 15h4"/></svg>',
+  signature: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17c2-4 3.5-8 5-8s1 5 2.5 5 2-3 3.5-3 1.5 4 3 4 2-2 4-2"/><path d="M4 21h16"/></svg>',
   search: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
   sun: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v2.4m0 14.2v2.4M4.9 4.9l1.7 1.7m10.8 10.8 1.7 1.7M2.5 12h2.4m14.2 0h2.4M4.9 19.1l1.7-1.7M17.4 6.6l1.7-1.7"/></svg>',
   moon: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z"/></svg>',
@@ -293,9 +294,9 @@ function bindBuyButtons(root, modules) {
 async function renderCatalog() {
   app.innerHTML = shell('catalog', `
     <div class="page-head">
-      <span class="eyebrow">Catalog</span>
+      <span class="eyebrow">Discover</span>
       <h1>Explore subjects</h1>
-      <p>Pick a subject, choose a track, and work through its modules in order.</p>
+      <p>Browse what's available and enroll in something new. Already learning something? Find it in <a href="#/learning">My Learning</a> instead.</p>
     </div>
     <div id="catalog-grid"><div class="skeleton" style="min-height:340px"></div></div>`);
   bindShell();
@@ -518,6 +519,7 @@ function drawAssignment() {
       <p style="margin:8px 0 0;color:var(--fg)">${esc(sub.feedback).replace(/\n/g, '<br>')}</p>
     </div>` : ''}
     <div class="lesson-content">${a.instructions_html}</div>
+    ${a.author ? `<div class="asg-author">${icon('signature')} Set by ${esc(a.author.name)}${a.author.designation ? `, ${esc(a.author.designation)}` : ''}</div>` : ''}
     <div class="asg-form">
       <div class="field">
         <label for="asg-text">Your answer ${graded ? '(locked after grading)' : ''}</label>
@@ -953,6 +955,7 @@ function drawLesson() {
   panel.innerHTML = `
     <h2>${esc(l.title)}</h2>
     ${l.blocks.map((b, bi) => blockHTML(b, bi)).join('')}
+    ${l.author ? `<div class="lesson-author">${icon('signature')} Written by ${esc(l.author.name)}${l.author.designation ? `, ${esc(l.author.designation)}` : ''}</div>` : ''}
     <div class="lesson-foot">
       <button class="btn btn-ghost" id="prev-btn" ${currentLessonIdx === 0 ? 'disabled' : ''}>${icon('arrowLeft')} Previous</button>
       <div class="lesson-foot-right">
@@ -1102,57 +1105,91 @@ function drawQuiz(result = null) {
 async function renderLearning() {
   app.innerHTML = shell('learning', `
     <div class="page-head">
-      <span class="eyebrow">Progress</span>
+      <span class="eyebrow">Your enrolled work</span>
       <h1>My Learning</h1>
-      <p>Everything you own, and how far you've come.</p>
+      <p>Everything you're enrolled in, grouped by what to do next. Looking for something new to add? That's what <a href="#/catalog">Explore</a> is for.</p>
     </div>
-    <div class="grid" id="learn-grid"><div class="skeleton"></div><div class="skeleton"></div></div>`);
+    <div id="learn-sections"><div class="skeleton" style="min-height:300px"></div></div>`);
   bindShell();
   try {
     const { modules } = await api('/api/catalog');
     const owned = modules.filter((m) => m.owned);
-    const grid = $('#learn-grid');
+    const box = $('#learn-sections');
     if (!owned.length) {
-      grid.outerHTML = `<div class="card empty">${icon('book')}<h3>Nothing here yet</h3><p>Pick your first module from the catalog and start your AI journey.</p><a class="btn btn-primary" href="#/catalog">Browse modules ${icon('arrowRight')}</a></div>`;
+      box.innerHTML = `<div class="card empty">${icon('book')}<h3>Nothing here yet</h3><p>Pick your first module from Explore and start your learning journey.</p><a class="btn btn-primary" href="#/catalog">Explore modules ${icon('arrowRight')}</a></div>`;
       return;
     }
-    grid.innerHTML = owned.map((m) => moduleCard(m, modules.indexOf(m))).join('');
+    const inProgress = owned.filter((m) => !m.completed && m.unlocked);
+    const lockedUp = owned.filter((m) => !m.completed && !m.unlocked);
+    const completed = owned.filter((m) => m.completed);
+    const section = (title, sub, list) => !list.length ? '' : `
+      <div class="section-row" style="margin-top:30px"><h3>${title}</h3></div>
+      <p class="hint-text" style="margin:-8px 0 14px">${sub}</p>
+      <div class="grid">${list.map((m) => moduleCard(m, modules.indexOf(m))).join('')}</div>`;
+    box.innerHTML = section('Continue learning', 'Pick up right where you left off.', inProgress)
+      + section('Up next — locked', 'Finish the previous module in each track to unlock these.', lockedUp)
+      + section('Completed', 'Great work — certificates are one click away.', completed);
   } catch (err) {
     if (err.status === 401) { me = null; render(); return; }
     toast(err.message, 'error');
   }
 }
 
-// ---------- flashcard review ----------
+// ---------- review hub: current focus, recent completions, flashcards ----------
 async function renderReview() {
   app.innerHTML = shell('review', '<div class="skeleton" style="min-height:340px"></div>');
   bindShell();
-  let cards;
-  try { cards = (await api('/api/review/queue')).cards; }
-  catch (err) { if (err.status === 401) { me = null; render(); } else toast(err.message, 'error'); return; }
+  let cards, dash;
+  try {
+    [cards, dash] = await Promise.all([
+      api('/api/review/queue').then((r) => r.cards),
+      api('/api/dashboard'),
+    ]);
+  } catch (err) { if (err.status === 401) { me = null; render(); } else toast(err.message, 'error'); return; }
+
+  const recap = `
+    <div class="page-head" style="margin-bottom:22px">
+      <span class="eyebrow">Recap & practice</span>
+      <h1>Review</h1>
+      <p>Your current focus, recently finished work, and a daily flashcard review to keep it all fresh.</p>
+    </div>
+    ${dash.resume ? `
+    <a class="card cl-card" href="#/module/${dash.resume.module_id}/lesson/${dash.resume.lesson_idx}" style="margin-bottom:28px">
+      ${thumbHTML(0)}
+      <div class="cl-info">
+        <strong>Continue: ${esc(dash.resume.module_title)}</strong>
+        <span class="cl-meta">Next up: ${esc(dash.resume.lesson_label)} · ${dash.resume.lessonsDone}/${dash.resume.lessonsTotal} lessons</span>
+      </div>
+      <span class="btn btn-primary btn-sm cl-btn">Resume ${icon('arrowRight')}</span>
+    </a>` : ''}
+    ${dash.recentCompletions.length ? `
+    <div class="section-row"><h3>Recently completed</h3></div>
+    <div class="recent-chip-row" style="margin-bottom:28px">
+      ${dash.recentCompletions.map((c) => `
+      <a class="recent-chip" href="#/module/${c.module_id}">${icon('check')} ${esc(c.title)}</a>`).join('')}
+    </div>` : ''}
+    <div class="section-row"><h3>Daily flashcard review</h3></div>`;
 
   const total = cards.length;
   let idx = 0;
   let flipped = false;
 
   function draw() {
-    const container = $('.container');
+    const area = $('#flash-area');
     if (idx >= cards.length) {
       refreshMe().then(() => {
         const link = document.querySelector('a[href="#/review"]');
         if (link) link.innerHTML = 'Review' + (meStats?.dueReviews ? ` <span class="due-pill">${meStats.dueReviews}</span>` : '');
       });
-      container.innerHTML = `
-        <div class="page-head"><span class="eyebrow">Spaced repetition</span><h1>Daily review</h1></div>
+      area.innerHTML = `
         <div class="card empty">${icon('trophy')}<h3>${total ? 'Review complete!' : 'Nothing due today'}</h3>
         <p>${total ? `You reviewed ${idx} card${idx === 1 ? '' : 's'}. They'll come back right before you'd forget them.` : 'Flashcards from your modules appear here on their schedule. Learn something new to add more.'}</p>
-        <a class="btn btn-primary" href="#/home">Back to dashboard ${icon('arrowRight')}</a></div>`;
+        ${dash.resume ? `<a class="btn btn-primary" href="#/module/${dash.resume.module_id}/lesson/${dash.resume.lesson_idx}">Continue learning ${icon('arrowRight')}</a>` : `<a class="btn btn-primary" href="#/catalog">Explore modules ${icon('arrowRight')}</a>`}</div>`;
       return;
     }
     const c = cards[idx];
-    container.innerHTML = `
-      <div class="page-head" style="margin-bottom:20px"><span class="eyebrow">Spaced repetition</span><h1>Daily review</h1>
-      <p>Card ${idx + 1} of ${cards.length} · ${esc(c.module_title)}</p></div>
+    area.innerHTML = `
+      <p style="color:var(--fg-muted);margin-bottom:14px">Card ${idx + 1} of ${cards.length} · ${esc(c.module_title)}</p>
       <div class="progress-track" style="max-width:560px;margin-bottom:24px"><div class="progress-fill" style="width:${Math.round((idx / cards.length) * 100)}%"></div></div>
       <div class="flash-stage">
         <button class="flash-card ${flipped ? 'flipped' : ''}" id="flash-card" aria-label="Flip card">
@@ -1167,7 +1204,7 @@ async function renderReview() {
         </div>
       </div>`;
     $('#flash-card').onclick = () => { if (!flipped) { flipped = true; draw(); } };
-    container.querySelectorAll('[data-grade]').forEach((b) => {
+    area.querySelectorAll('[data-grade]').forEach((b) => {
       b.onclick = async () => {
         try {
           const r = await api(`/api/review/${c.id}`, { method: 'POST', body: { grade: b.dataset.grade } });
@@ -1178,6 +1215,7 @@ async function renderReview() {
       };
     });
   }
+  $('.container').innerHTML = recap + '<div id="flash-area"></div>';
   draw();
 }
 
@@ -1418,7 +1456,7 @@ const palette = {
       { type: 'action', title: 'Start daily review', hint: 'Flashcards', run: () => { location.hash = '#/review'; } },
       { type: 'action', title: 'Sign out', hint: 'Account', run: async () => { await api('/api/logout', { method: 'POST' }); me = null; render(); } },
     ];
-    if (me?.role === 'admin') acts.push({ type: 'action', title: 'Open admin panel', hint: 'Admin', run: () => { location.href = '/admin'; } });
+    if (me?.role === 'admin' || me?.role === 'teacher') acts.push({ type: 'action', title: 'Open admin panel', hint: me.role === 'admin' ? 'Admin' : 'Teacher', run: () => { location.href = '/admin'; } });
     return acts;
   },
   async open() {

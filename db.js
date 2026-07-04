@@ -179,16 +179,21 @@ if (!hasColumn('lessons', 'blocks_json')) db.exec('ALTER TABLE lessons ADD COLUM
 if (!hasColumn('modules', 'track_id')) db.exec('ALTER TABLE modules ADD COLUMN track_id INTEGER REFERENCES tracks(id) ON DELETE SET NULL');
 if (!hasColumn('modules', 'quiz_draw')) db.exec('ALTER TABLE modules ADD COLUMN quiz_draw INTEGER NOT NULL DEFAULT 0');
 if (!hasColumn('quiz_attempts', 'answers_json')) db.exec('ALTER TABLE quiz_attempts ADD COLUMN answers_json TEXT');
+if (!hasColumn('users', 'designation')) db.exec('ALTER TABLE users ADD COLUMN designation TEXT');
+if (!hasColumn('lessons', 'created_by')) db.exec('ALTER TABLE lessons ADD COLUMN created_by INTEGER REFERENCES users(id) ON DELETE SET NULL');
+if (!hasColumn('assignments', 'created_by')) db.exec('ALTER TABLE assignments ADD COLUMN created_by INTEGER REFERENCES users(id) ON DELETE SET NULL');
+if (!hasColumn('flashcards', 'created_by')) db.exec('ALTER TABLE flashcards ADD COLUMN created_by INTEGER REFERENCES users(id) ON DELETE SET NULL');
+if (!hasColumn('quiz_questions', 'created_by')) db.exec('ALTER TABLE quiz_questions ADD COLUMN created_by INTEGER REFERENCES users(id) ON DELETE SET NULL');
 
 function hashPassword(password, salt) {
   return crypto.scryptSync(password, salt, 64).toString('hex');
 }
 
-function createUser(name, email, password, role = 'learner') {
+function createUser(name, email, password, role = 'learner', designation = null) {
   const salt = crypto.randomBytes(16).toString('hex');
   const hash = hashPassword(password, salt);
-  const stmt = db.prepare('INSERT INTO users (name, email, pass_hash, salt, role) VALUES (?, ?, ?, ?, ?)');
-  const res = stmt.run(name, email, hash, salt, role);
+  const stmt = db.prepare('INSERT INTO users (name, email, pass_hash, salt, role, designation) VALUES (?, ?, ?, ?, ?, ?)');
+  const res = stmt.run(name, email, hash, salt, role, designation);
   return Number(res.lastInsertRowid);
 }
 
@@ -278,11 +283,12 @@ function seed() {
   const count = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
   if (count > 0) return;
 
-  createUser('Platform Admin', 'admin@platform.ai', 'admin123', 'admin');
+  createUser('Platform Admin', 'admin@platform.ai', 'admin123', 'admin', 'Platform Administrator');
+  const teacherId = createUser('Dr. Amara Okafor', 'teacher@platform.ai', 'teacher123', 'teacher', 'PhD, Machine Learning — Lead Instructor');
 
   const addModule = db.prepare('INSERT INTO modules (title, description, level, duration_mins, base_price, position, published, pass_percent, quiz_draw) VALUES (?,?,?,?,?,?,?,?,?)');
-  const addLesson = db.prepare('INSERT INTO lessons (module_id, title, blocks_json, position) VALUES (?,?,?,?)');
-  const addQ = db.prepare('INSERT INTO quiz_questions (module_id, question, options_json, correct_index, position) VALUES (?,?,?,?,?)');
+  const addLesson = db.prepare('INSERT INTO lessons (module_id, title, blocks_json, position, created_by) VALUES (?,?,?,?,?)');
+  const addQ = db.prepare('INSERT INTO quiz_questions (module_id, question, options_json, correct_index, position, created_by) VALUES (?,?,?,?,?,?)');
 
   const defs = [
     ['Foundations of AI', 'What artificial intelligence really is, how it evolved, and the core ideas — search, knowledge, and learning — that power every modern system.', 'Beginner', 90, 29, 1, 70,
@@ -295,8 +301,8 @@ function seed() {
 
   defs.forEach(([title, desc, level, mins, price, pos, pass, lessonTitles], di) => {
     const mid = Number(addModule.run(title, desc, level, mins, price, pos, 1, pass, 3).lastInsertRowid);
-    lessonTitles.forEach((lt, i) => addLesson.run(mid, lt, JSON.stringify(SEED_BLOCKS[lt]), i + 1));
-    (SEED_QUESTIONS[di + 1] || []).forEach(([q, opts, ci], i) => addQ.run(mid, q, JSON.stringify(opts), ci, i + 1));
+    lessonTitles.forEach((lt, i) => addLesson.run(mid, lt, JSON.stringify(SEED_BLOCKS[lt]), i + 1, teacherId));
+    (SEED_QUESTIONS[di + 1] || []).forEach(([q, opts, ci], i) => addQ.run(mid, q, JSON.stringify(opts), ci, i + 1, teacherId));
   });
 }
 

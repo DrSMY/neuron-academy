@@ -26,6 +26,7 @@ ICONS.sun = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-lineca
 ICONS.upload = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0 4.5 4.5M12 4 7.5 8.5M4 16v3a1.5 1.5 0 0 0 1.5 1.5h13A1.5 1.5 0 0 0 20 19v-3"/></svg>';
 ICONS.inbox = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13h5l1.5 2.5h5L16 13h5M3 13l2.5-8h13L21 13M3 13v6a1.5 1.5 0 0 0 1.5 1.5h15A1.5 1.5 0 0 0 21 19v-6"/></svg>';
 ICONS.file = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2.5h8L19 7.5V20a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 20V4A1.5 1.5 0 0 1 6.5 2.5z"/><path d="M14 2.5v5h5"/></svg>';
+ICONS.signature = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17c2-4 3.5-8 5-8s1 5 2.5 5 2-3 3.5-3 1.5 4 3 4 2-2 4-2"/><path d="M4 21h16"/></svg>';
 ICONS.moon = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z"/></svg>';
 function icon(n) { return ICONS[n] || ''; }
 
@@ -93,25 +94,30 @@ let me = null;
 let view = 'overview';
 
 // ---------- shell ----------
+function isAdmin() { return me.role === 'admin'; }
+
 function shell(content) {
+  const badge = me.role === 'admin' ? 'Admin' : 'Teacher';
+  const byline = me.designation ? `<span style="color:var(--fg-faint);font-weight:400;font-size:12px"> · ${esc(me.designation)}</span>` : '';
   return `
   <header class="topbar">
-    <a class="brand" href="/admin"><span class="logo">${icon('logo')}</span><span class="brand-text">Neuron Academy</span> <span style="color:var(--fg-faint);font-weight:400;font-size:13px;margin-left:2px">Admin</span></a>
+    <a class="brand" href="/admin"><span class="logo">${icon('logo')}</span><span class="brand-text">Neuron Academy</span> <span style="color:var(--fg-faint);font-weight:400;font-size:13px;margin-left:2px">${badge}</span></a>
     <span class="spacer"></span>
     <div class="user-chip">
       <button class="icon-btn theme-btn" id="theme-btn" aria-label="Toggle theme">${icon(currentTheme() === 'light' ? 'moon' : 'sun')}</button>
       <a class="nav-link" href="/">Learner view</a>
       <span class="avatar" aria-hidden="true">${esc(me.name.charAt(0).toUpperCase())}</span>
+      <span style="font-size:13.5px">${esc(me.name)}${byline}</span>
       <button class="btn btn-ghost btn-sm" id="logout-btn">Sign out</button>
     </div>
   </header>
   <div class="admin-layout">
     <aside class="sidebar">
-      <button class="side-link ${view === 'overview' ? 'active' : ''}" data-view="overview">${icon('home')} Overview</button>
+      ${isAdmin() ? `<button class="side-link ${view === 'overview' ? 'active' : ''}" data-view="overview">${icon('home')} Overview</button>` : ''}
       <button class="side-link ${view === 'modules' || view === 'editor' ? 'active' : ''}" data-view="modules">${icon('layers')} Modules</button>
-      <button class="side-link ${view === 'users' || view === 'userDetail' ? 'active' : ''}" data-view="users">${icon('users')} Users & Pricing</button>
+      ${isAdmin() ? `<button class="side-link ${view === 'users' || view === 'userDetail' ? 'active' : ''}" data-view="users">${icon('users')} Users & Pricing</button>` : ''}
       <button class="side-link ${view === 'submissions' ? 'active' : ''}" data-view="submissions">${icon('inbox')} Submissions</button>
-      <button class="side-link ${view === 'analytics' ? 'active' : ''}" data-view="analytics">${icon('chart')} Analytics</button>
+      ${isAdmin() ? `<button class="side-link ${view === 'analytics' ? 'active' : ''}" data-view="analytics">${icon('chart')} Analytics</button>` : ''}
     </aside>
     <main class="admin-main">${content}</main>
   </div>`;
@@ -364,6 +370,11 @@ async function moduleForm(mod) {
 }
 
 // ---------- module editor (lessons + quiz) ----------
+function authorTag(item) {
+  if (!item.author) return '';
+  return `<span class="author-tag">${icon('signature')} ${esc(item.author.name)}${item.author.designation ? `, ${esc(item.author.designation)}` : ''}</span>`;
+}
+
 async function renderEditor(moduleId) {
   app.innerHTML = shell('<div class="skeleton" style="min-height:300px"></div>');
   bindShell();
@@ -396,6 +407,7 @@ async function renderEditor(moduleId) {
             </div>
           </div>
           <span class="drag-hint">${l.blocks.length} block${l.blocks.length === 1 ? '' : 's'}: ${l.blocks.map((b) => b.type).join(', ') || 'empty'}</span>
+          ${authorTag(l)}
         </div>`).join('') : `<div class="card empty" style="padding:40px">${icon('layers')}<h3>No lessons yet</h3><p>Add the first lesson to start building this module.</p></div>`}
     </div>
 
@@ -406,7 +418,7 @@ async function renderEditor(moduleId) {
       </span></div>
     <div class="card editor-block">
       ${questions.length ? questions.map((q, i) => `
-        <p style="margin:6px 0;color:var(--fg-muted)"><span style="color:var(--accent-bright);font-weight:600">${i + 1}.</span> ${esc(q.question)}
+        <p style="margin:6px 0;color:var(--fg-muted)" ${q.author ? `title="Added by ${esc(q.author.name)}${q.author.designation ? ', ' + esc(q.author.designation) : ''}"` : ''}><span style="color:var(--accent-bright);font-weight:600">${i + 1}.</span> ${esc(q.question)}
         <span style="color:var(--success);font-size:13px"> — ${esc(q.options[q.correct_index])}</span></p>`).join('')
       : '<p style="color:var(--fg-muted)">No quiz yet — learners complete this module by finishing all lessons. Add questions to require a passing score.</p>'}
       <p class="drag-hint" style="margin-top:10px">Pass mark: ${mod.pass_percent}%${mod.quiz_draw > 0 ? ` · each attempt draws ${mod.quiz_draw} random question${mod.quiz_draw === 1 ? '' : 's'} from the bank` : ' · every attempt asks all questions'}</p>
@@ -416,7 +428,7 @@ async function renderEditor(moduleId) {
       <button class="btn btn-ghost btn-sm" data-import="cards">${icon('upload')} Import</button></div>
     <div class="card editor-block">
       ${cards.length ? cards.map((c) => `
-        <div class="block-head" style="margin:6px 0;align-items:flex-start">
+        <div class="block-head" style="margin:6px 0;align-items:flex-start" ${c.author ? `title="Added by ${esc(c.author.name)}${c.author.designation ? ', ' + esc(c.author.designation) : ''}"` : ''}>
           <p style="color:var(--fg-muted);flex:1;margin:0"><strong style="color:var(--fg)">${esc(c.front)}</strong> — ${esc(c.back)}
           ${c.source === 'derived' ? '<span class="badge locked" style="margin-left:8px">auto</span>' : ''}</p>
           <button class="icon-btn" data-del-card="${c.id}" aria-label="Delete card">${icon('x')}</button>
@@ -443,7 +455,8 @@ async function renderEditor(moduleId) {
             <button class="btn btn-ghost btn-sm" data-edit-asg="${a.id}">${icon('edit')} Edit</button>
             <button class="btn btn-danger btn-sm" data-del-asg="${a.id}" aria-label="Delete assignment">${icon('trash')}</button>
           </div>
-        </div>`).join('') : '<p style="color:var(--fg-muted)">No assignments yet. Learners submit written work (plus an optional file) and you grade it in the Submissions inbox.</p>'}
+        </div>
+        ${authorTag(a)}`).join('') : '<p style="color:var(--fg-muted)">No assignments yet. Learners submit written work (plus an optional file) and you grade it in the Submissions inbox.</p>'}
     </div>`;
 
   $('#back-mods').onclick = () => { view = 'modules'; render(); };
@@ -720,10 +733,24 @@ const IMPORT_SPECS = {
   lessons: {
     label: 'lessons',
     columns: 'title, content (optional: video)',
-    json: '[{ "title": "…", "blocks": [{ "type": "text", "html": "<p>…</p>" }] }]',
-    note: 'Spreadsheets create text lessons (plain text is wrapped into paragraphs; a video column adds an embedded video). JSON supports every block type: text, video, code, order, match, blank.',
+    json: '[{ "title": "…", "blocks": [ ...block objects, see reference below... ] }]',
+    note: 'CSV/Excel always creates a simple text lesson (plain text is wrapped into paragraphs; a video column adds an embedded video). To use rich HTML or the interactive block types below, import JSON — one lesson object per array entry, each with a "title" and a "blocks" array.',
     sample: 'lessons-sample.json',
     sampleDesc: '2 lessons showing every block type',
+    blockRef: [
+      { type: 'text', label: 'Rich HTML content', desc: 'Any HTML: headings, paragraphs, lists, bold/italic, links.',
+        json: '{ "type": "text", "html": "<h3>Heading</h3><p>Paragraph with <strong>bold</strong> and a <a href=\\"#\\">link</a>.</p><ul><li>Point one</li></ul>" }' },
+      { type: 'video', label: 'Video', desc: 'One embed URL — nothing else to configure.',
+        json: '{ "type": "video", "url": "https://www.youtube.com/embed/VIDEO_ID" }' },
+      { type: 'order', label: 'Put in order', desc: '"items" listed in the CORRECT order — learners see them shuffled.',
+        json: '{ "type": "order", "prompt": "Put the steps in order", "items": ["Step one", "Step two", "Step three"] }' },
+      { type: 'match', label: 'Match pairs', desc: '"pairs" of left/right terms — learners match them.',
+        json: '{ "type": "match", "prompt": "Match each term", "pairs": [{ "l": "Term", "r": "Definition" }, { "l": "H2O", "r": "Water" }] }' },
+      { type: 'blank', label: 'Fill in the blanks', desc: 'Wrap answers in {{double braces}}; pipe-separate accepted alternates.',
+        json: '{ "type": "blank", "prompt": "Complete the sentence", "text": "The capital of France is {{Paris}}." }' },
+      { type: 'code', label: 'Code playground', desc: 'A runnable JS exercise checked against a goal console output.',
+        json: '{ "type": "code", "instructions": "Log the sum of 2 and 2.", "starter": "// your code here", "expected_output": "4" }' },
+    ],
   },
   assignments: {
     label: 'assignments',
@@ -753,6 +780,18 @@ function importModal(moduleId, kind) {
       <p class="drag-hint">${spec.note}</p>
       <a class="sample-link" href="/samples/${spec.sample}" download>${icon('file')} Download sample file <span>— ${esc(spec.sampleDesc)}</span></a>
     </div>
+    ${spec.blockRef ? `
+    <details class="block-ref" open>
+      <summary>${icon('layers')} Block type reference — copy the snippet you need into your "blocks" array</summary>
+      <div class="block-ref-grid">
+        ${spec.blockRef.map((b) => `
+        <div class="block-ref-item">
+          <div class="block-ref-head"><span class="badge ready">${esc(b.label)}</span></div>
+          <p>${esc(b.desc)}</p>
+          <code>${esc(b.json)}</code>
+        </div>`).join('')}
+      </div>
+    </details>` : ''}
     <label class="import-drop" id="import-drop">
       ${icon('upload')}
       <strong id="import-label">Choose a file or drop it here</strong>
@@ -760,7 +799,7 @@ function importModal(moduleId, kind) {
       <input type="file" id="import-file" accept=".json,.csv,.xlsx" hidden>
     </label>
     <div id="import-result" style="margin-top:14px"></div>
-    <button class="btn btn-primary" style="width:100%;margin-top:14px" id="import-go" disabled>${icon('upload')} Import</button>`);
+    <button class="btn btn-primary" style="width:100%;margin-top:14px" id="import-go" disabled>${icon('upload')} Import</button>`, kind === 'lessons');
 
   const fileInput = $('#import-file');
   const drop = $('#import-drop');
@@ -963,28 +1002,64 @@ async function renderUsers() {
   app.innerHTML = shell('<div class="skeleton" style="min-height:300px"></div>');
   bindShell();
   const { users } = await api('/api/admin/users');
+  const roleBadge = (u) => u.role === 'admin' ? '<span class="badge ready">Admin</span>'
+    : u.role === 'teacher' ? `<span class="badge completed">${icon('sparkle')} Teacher</span>` : 'Learner';
   $('.admin-main').innerHTML = `
     <div class="page-head"><span class="eyebrow">Access control</span><h1>Users & Pricing</h1>
-    <p>Click a user to set custom per-module prices, grant free access, or override the sequential lock.</p></div>
+    <p>Click a user to set custom per-module prices, grant free access, or override the sequential lock. Use <strong>Role</strong> to give someone teacher privileges — they can then create subjects, tracks, modules, and lessons, and grade submissions.</p></div>
     <div class="card table-card">
       <table class="data">
         <thead><tr><th>User</th><th>Email</th><th>Role</th><th>Owns</th><th>Completed</th><th>Spent</th><th>Joined</th><th></th></tr></thead>
         <tbody>${users.map((u) => `
           <tr>
-            <td class="t-strong">${esc(u.name)}</td>
+            <td class="t-strong">${esc(u.name)}${u.designation ? `<div class="drag-hint">${esc(u.designation)}</div>` : ''}</td>
             <td>${esc(u.email)}</td>
-            <td>${u.role === 'admin' ? '<span class="badge ready">Admin</span>' : 'Learner'}</td>
+            <td>${roleBadge(u)}</td>
             <td class="num">${u.owned_count}</td>
             <td class="num">${u.completed_count}</td>
             <td class="num">${money(u.spent)}</td>
             <td>${esc(u.created_at.slice(0, 10))}</td>
-            <td style="text-align:right"><button class="btn btn-ghost btn-sm" data-user="${u.id}">${icon('settings')} Manage</button></td>
+            <td style="text-align:right;white-space:nowrap">
+              <button class="btn btn-ghost btn-sm" data-role="${u.id}">${icon('sparkle')} Role</button>
+              <button class="btn btn-ghost btn-sm" data-user="${u.id}">${icon('settings')} Manage</button>
+            </td>
           </tr>`).join('')}
         </tbody>
       </table>
     </div>`;
   document.querySelectorAll('[data-user]').forEach((b) => {
     b.onclick = () => { view = 'userDetail'; renderUserDetail(Number(b.dataset.user)); };
+  });
+  document.querySelectorAll('[data-role]').forEach((b) => {
+    b.onclick = () => {
+      const u = users.find((x) => x.id === Number(b.dataset.role));
+      openModal(`
+        <div class="modal-head"><h3>Set role — ${esc(u.name)}</h3><button class="icon-btn" data-close aria-label="Close">${icon('x')}</button></div>
+        <form id="role-form">
+          <div class="field"><label>Role</label>
+            <select name="role">
+              <option value="learner" ${u.role === 'learner' ? 'selected' : ''}>Learner</option>
+              <option value="teacher" ${u.role === 'teacher' ? 'selected' : ''}>Teacher — can author subjects, modules, lessons and grade work</option>
+              <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin — full platform control</option>
+            </select>
+          </div>
+          <div class="field"><label>Designation</label>
+            <input name="designation" value="${esc(u.designation || '')}" placeholder="e.g. PhD, Physiotherapy — signs their lessons and assignments">
+            <div class="hint">Shown to learners as "Written by ${esc(u.name)}, {designation}" on anything this person creates.</div>
+          </div>
+          <button class="btn btn-primary" style="width:100%" type="submit">Save role</button>
+        </form>`);
+      $('#role-form').onsubmit = async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        try {
+          await api(`/api/admin/users/${u.id}/role`, { method: 'PUT', body: { role: fd.get('role'), designation: fd.get('designation') } });
+          closeModal();
+          toast('Role updated.');
+          renderUsers();
+        } catch (err) { toast(err.message, 'error'); }
+      };
+    };
   });
 }
 
@@ -1045,7 +1120,10 @@ async function renderUserDetail(userId) {
 // ---------- router ----------
 function render() {
   const views = { overview: renderOverview, modules: renderModules, users: renderUsers, analytics: renderAnalytics, submissions: renderSubmissions };
-  (views[view] || renderOverview)().catch((err) => {
+  const fallback = isAdmin() ? renderOverview : renderModules;
+  const guarded = { overview: isAdmin, users: isAdmin, userDetail: isAdmin, analytics: isAdmin };
+  if (guarded[view] && !guarded[view]()) view = 'modules';
+  (views[view] || fallback)().catch((err) => {
     if (err.status === 401 || err.status === 403) location.href = '/';
     else toast(err.message, 'error');
   });
@@ -1055,7 +1133,8 @@ function render() {
   try {
     const d = await api('/api/me');
     me = d.user;
-    if (me.role !== 'admin') { location.href = '/'; return; }
+    if (me.role !== 'admin' && me.role !== 'teacher') { location.href = '/'; return; }
+    view = me.role === 'admin' ? 'overview' : 'modules';
     render();
   } catch {
     location.href = '/';

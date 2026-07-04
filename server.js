@@ -49,7 +49,7 @@ function currentUser(req) {
   const token = getCookie(req, 'session');
   if (!token) return null;
   const row = db.prepare(`
-    SELECT u.id, u.name, u.email, u.role FROM sessions s
+    SELECT u.id, u.name, u.email, u.role, u.designation FROM sessions s
     JOIN users u ON u.id = s.user_id WHERE s.token = ?`).get(token);
   return row || null;
 }
@@ -295,9 +295,13 @@ route('GET', '/api/dashboard', async (req, res, _p, user) => {
     )`).get(user.id, user.id).c;
   const completed = db.prepare('SELECT COUNT(*) AS c FROM module_completions WHERE user_id = ?').get(user.id).c;
   const lessonsDone = db.prepare('SELECT COUNT(*) AS c FROM lesson_progress WHERE user_id = ?').get(user.id).c;
+  const recentCompletions = db.prepare(`
+    SELECT mc.module_id, m.title, mc.completed_at FROM module_completions mc
+    JOIN modules m ON m.id = mc.module_id
+    WHERE mc.user_id = ? ORDER BY mc.completed_at DESC LIMIT 5`).all(user.id);
   send(res, 200, {
     streak, activeToday, ...levelInfo(userXp(user.id)),
-    heatmap: heat, badges: userBadges(user.id), resume: resumeTarget(user.id),
+    heatmap: heat, badges: userBadges(user.id), resume: resumeTarget(user.id), recentCompletions,
     stats: { owned, completed, lessonsDone },
   });
 }, { auth: true });
@@ -314,7 +318,10 @@ route('GET', '/api/module/:id', async (req, res, p, user) => {
   if (!trackMods.some((m) => m.id === mod.id)) return send(res, 404, { error: 'Module not found.' });
   if (!isOwned(user.id, mod.id)) return send(res, 403, { error: 'You have not purchased this module yet.', reason: 'not_owned' });
   if (!isSequentiallyUnlocked(user.id, mod, trackMods)) return send(res, 403, { error: 'Complete the previous module in this track to unlock this one.', reason: 'sequential' });
-  const lessons = db.prepare('SELECT id, title, blocks_json, position FROM lessons WHERE module_id = ? ORDER BY position, id').all(mod.id);
+  const lessons = db.prepare(`
+    SELECT l.id, l.title, l.blocks_json, l.position, u.name AS author_name, u.designation AS author_designation
+    FROM lessons l LEFT JOIN users u ON u.id = l.created_by
+    WHERE l.module_id = ? ORDER BY l.position, l.id`).all(mod.id);
   const doneRows = db.prepare(`SELECT lesson_id FROM lesson_progress WHERE user_id = ? AND lesson_id IN (SELECT id FROM lessons WHERE module_id = ?)`).all(user.id, mod.id);
   const doneSet = new Set(doneRows.map((r) => r.lesson_id));
   // Question bank: draw quiz_draw random questions (0 = all) and shuffle
@@ -331,17 +338,24 @@ route('GET', '/api/module/:id', async (req, res, p, user) => {
       return { id: q.id, question: q.question, options: opts };
     });
   const best = db.prepare('SELECT MAX(score) AS s FROM quiz_attempts WHERE user_id = ? AND module_id = ?').get(user.id, mod.id).s;
-  const assignments = db.prepare('SELECT id, title, instructions_html, points, position FROM assignments WHERE module_id = ? ORDER BY position, id').all(mod.id)
+  const assignments = db.prepare(`
+    SELECT a.id, a.title, a.instructions_html, a.points, a.position, u.name AS author_name, u.designation AS author_designation
+    FROM assignments a LEFT JOIN users u ON u.id = a.created_by
+    WHERE a.module_id = ? ORDER BY a.position, a.id`).all(mod.id)
     .map((a) => {
       const sub = db.prepare('SELECT id, status, grade, feedback, content_text, file_name, submitted_at, graded_at FROM submissions WHERE assignment_id = ? AND user_id = ?').get(a.id, user.id);
-      return { ...a, submission: sub || null };
+      const { author_name, author_designation, ...rest } = a;
+      return { ...rest, author: author_name ? { name: author_name, designation: author_designation } : null, submission: sub || null };
     });
   send(res, 200, {
     module: {
       id: mod.id, title: mod.title, description: mod.description, level: mod.level,
       duration_mins: mod.duration_mins, pass_percent: mod.pass_percent,
       completed: isCompleted(user.id, mod.id), bestScore: best,
-      lessons: lessons.map((l) => ({ id: l.id, title: l.title, position: l.position, blocks: JSON.parse(l.blocks_json || '[]'), done: doneSet.has(l.id) })),
+      lessons: lessons.map((l) => ({
+        id: l.id, title: l.title, position: l.position, blocks: JSON.parse(l.blocks_json || '[]'), done: doneSet.has(l.id),
+        author: l.author_name ? { name: l.author_name, designation: l.author_designation } : null,
+      })),
       assignments,
       quiz: questions, quiz_bank_size: bankSize,
     },
@@ -560,7 +574,7 @@ route('GET', '/api/admin/structure', async (req, res) => {
       FROM tracks t WHERE t.subject_id = ? ORDER BY t.position, t.id`).all(s.id),
   }));
   send(res, 200, { subjects });
-}, { admin: true });
+}, { staff: true });
 
 route('POST', '/api/admin/subjects', async (req, res) => {
   const b = await readBody(req);
@@ -569,7 +583,7 @@ route('POST', '/api/admin/subjects', async (req, res) => {
   const r = db.prepare('INSERT INTO subjects (title, description, position, published) VALUES (?,?,?,?)')
     .run(b.title.trim(), b.description || '', maxPos + 1, b.published ? 1 : 0);
   send(res, 200, { id: Number(r.lastInsertRowid) });
-}, { admin: true });
+}, { staff: true });
 
 route('PUT', '/api/admin/subjects/:id', async (req, res, p) => {
   const b = await readBody(req);
@@ -577,14 +591,14 @@ route('PUT', '/api/admin/subjects/:id', async (req, res, p) => {
   db.prepare('UPDATE subjects SET title = ?, description = ?, position = ?, published = ? WHERE id = ?')
     .run(b.title.trim(), b.description || '', b.position || 0, b.published ? 1 : 0, p.id);
   send(res, 200, { ok: true });
-}, { admin: true });
+}, { staff: true });
 
 route('DELETE', '/api/admin/subjects/:id', async (req, res, p) => {
   const mods = db.prepare('SELECT COUNT(*) AS c FROM modules m JOIN tracks t ON t.id = m.track_id WHERE t.subject_id = ?').get(p.id).c;
   if (mods > 0) return send(res, 409, { error: `This subject still contains ${mods} module${mods === 1 ? '' : 's'}. Move or delete them first.` });
   db.prepare('DELETE FROM subjects WHERE id = ?').run(p.id);
   send(res, 200, { ok: true });
-}, { admin: true });
+}, { staff: true });
 
 route('POST', '/api/admin/tracks', async (req, res) => {
   const b = await readBody(req);
@@ -595,7 +609,7 @@ route('POST', '/api/admin/tracks', async (req, res) => {
   const r = db.prepare('INSERT INTO tracks (subject_id, title, description, position, published) VALUES (?,?,?,?,?)')
     .run(subject.id, b.title.trim(), b.description || '', maxPos + 1, b.published ? 1 : 0);
   send(res, 200, { id: Number(r.lastInsertRowid) });
-}, { admin: true });
+}, { staff: true });
 
 route('PUT', '/api/admin/tracks/:id', async (req, res, p) => {
   const b = await readBody(req);
@@ -603,14 +617,14 @@ route('PUT', '/api/admin/tracks/:id', async (req, res, p) => {
   db.prepare('UPDATE tracks SET title = ?, description = ?, position = ?, published = ?, subject_id = COALESCE(?, subject_id) WHERE id = ?')
     .run(b.title.trim(), b.description || '', b.position || 0, b.published ? 1 : 0, b.subject_id || null, p.id);
   send(res, 200, { ok: true });
-}, { admin: true });
+}, { staff: true });
 
 route('DELETE', '/api/admin/tracks/:id', async (req, res, p) => {
   const mods = db.prepare('SELECT COUNT(*) AS c FROM modules WHERE track_id = ?').get(p.id).c;
   if (mods > 0) return send(res, 409, { error: `This track still contains ${mods} module${mods === 1 ? '' : 's'}. Move or delete them first.` });
   db.prepare('DELETE FROM tracks WHERE id = ?').run(p.id);
   send(res, 200, { ok: true });
-}, { admin: true });
+}, { staff: true });
 
 route('GET', '/api/admin/modules', async (req, res) => {
   const mods = db.prepare(`
@@ -623,7 +637,7 @@ route('GET', '/api/admin/modules', async (req, res) => {
     LEFT JOIN subjects s ON s.id = t.subject_id
     ORDER BY s.position, s.id, t.position, t.id, m.position, m.id`).all();
   send(res, 200, { modules: mods });
-}, { admin: true });
+}, { staff: true });
 
 route('POST', '/api/admin/modules', async (req, res) => {
   const b = await readBody(req);
@@ -634,7 +648,7 @@ route('POST', '/api/admin/modules', async (req, res) => {
   const r = db.prepare('INSERT INTO modules (title, description, level, duration_mins, base_price, position, published, pass_percent, quiz_draw, track_id) VALUES (?,?,?,?,?,?,?,?,?,?)')
     .run(b.title, b.description || '', b.level || 'Beginner', b.duration_mins || 60, b.base_price || 0, maxPos + 1, b.published ? 1 : 0, b.pass_percent || 70, b.quiz_draw || 0, track.id);
   send(res, 200, { id: Number(r.lastInsertRowid) });
-}, { admin: true });
+}, { staff: true });
 
 route('PUT', '/api/admin/modules/:id', async (req, res, p) => {
   const b = await readBody(req);
@@ -643,27 +657,41 @@ route('PUT', '/api/admin/modules/:id', async (req, res, p) => {
   db.prepare('UPDATE modules SET title = ?, description = ?, level = ?, duration_mins = ?, base_price = ?, position = ?, published = ?, pass_percent = ?, quiz_draw = ?, track_id = COALESCE(?, track_id) WHERE id = ?')
     .run(b.title, b.description || '', b.level || 'Beginner', b.duration_mins || 60, b.base_price || 0, b.position || 0, b.published ? 1 : 0, b.pass_percent || 70, b.quiz_draw || 0, b.track_id || null, p.id);
   send(res, 200, { ok: true });
-}, { admin: true });
+}, { staff: true });
 
 route('DELETE', '/api/admin/modules/:id', async (req, res, p) => {
   db.prepare('DELETE FROM modules WHERE id = ?').run(p.id);
   send(res, 200, { ok: true });
-}, { admin: true });
+}, { staff: true });
+
+function withAuthor(row) {
+  const { author_name, author_designation, ...rest } = row;
+  return { ...rest, author: author_name ? { name: author_name, designation: author_designation } : null };
+}
 
 route('GET', '/api/admin/modules/:id/content', async (req, res, p) => {
   const mod = db.prepare('SELECT * FROM modules WHERE id = ?').get(p.id);
   if (!mod) return send(res, 404, { error: 'Module not found.' });
-  const lessons = db.prepare('SELECT id, module_id, title, blocks_json, position FROM lessons WHERE module_id = ? ORDER BY position, id').all(p.id)
-    .map((l) => ({ id: l.id, module_id: l.module_id, title: l.title, position: l.position, blocks: JSON.parse(l.blocks_json || '[]') }));
-  const questions = db.prepare('SELECT * FROM quiz_questions WHERE module_id = ? ORDER BY position, id').all(p.id)
-    .map((q) => ({ ...q, options: JSON.parse(q.options_json) }));
-  const cards = db.prepare('SELECT id, front, back, source FROM flashcards WHERE module_id = ? ORDER BY position, id').all(p.id);
+  const lessons = db.prepare(`
+    SELECT l.id, l.module_id, l.title, l.blocks_json, l.position, u.name AS author_name, u.designation AS author_designation
+    FROM lessons l LEFT JOIN users u ON u.id = l.created_by WHERE l.module_id = ? ORDER BY l.position, l.id`).all(p.id)
+    .map((l) => withAuthor({ ...l, blocks: JSON.parse(l.blocks_json || '[]') }));
+  const questions = db.prepare(`
+    SELECT q.*, u.name AS author_name, u.designation AS author_designation
+    FROM quiz_questions q LEFT JOIN users u ON u.id = q.created_by WHERE q.module_id = ? ORDER BY q.position, q.id`).all(p.id)
+    .map((q) => withAuthor({ ...q, options: JSON.parse(q.options_json) }));
+  const cards = db.prepare(`
+    SELECT f.id, f.front, f.back, f.source, u.name AS author_name, u.designation AS author_designation
+    FROM flashcards f LEFT JOIN users u ON u.id = f.created_by WHERE f.module_id = ? ORDER BY f.position, f.id`).all(p.id)
+    .map(withAuthor);
   const assignments = db.prepare(`
-    SELECT a.*, (SELECT COUNT(*) FROM submissions WHERE assignment_id = a.id) AS submission_count,
+    SELECT a.*, u.name AS author_name, u.designation AS author_designation,
+           (SELECT COUNT(*) FROM submissions WHERE assignment_id = a.id) AS submission_count,
            (SELECT COUNT(*) FROM submissions WHERE assignment_id = a.id AND status = 'submitted') AS ungraded_count
-    FROM assignments a WHERE a.module_id = ? ORDER BY a.position, a.id`).all(p.id);
+    FROM assignments a LEFT JOIN users u ON u.id = a.created_by WHERE a.module_id = ? ORDER BY a.position, a.id`).all(p.id)
+    .map(withAuthor);
   send(res, 200, { module: mod, lessons, questions, cards, assignments });
-}, { admin: true });
+}, { staff: true });
 
 // ---------- file import parsers (zero-dependency) ----------
 function decodeXml(s) {
@@ -801,16 +829,16 @@ function validateBlocks(blocks) {
   return null;
 }
 
-route('POST', '/api/admin/modules/:id/lessons', async (req, res, p) => {
+route('POST', '/api/admin/modules/:id/lessons', async (req, res, p, user) => {
   const b = await readBody(req);
   if (!b.title) return send(res, 400, { error: 'Lesson title is required.' });
   const err = validateBlocks(b.blocks || []);
   if (err) return send(res, 400, { error: err });
   const maxPos = db.prepare('SELECT COALESCE(MAX(position), 0) AS m FROM lessons WHERE module_id = ?').get(p.id).m;
-  const r = db.prepare('INSERT INTO lessons (module_id, title, blocks_json, position) VALUES (?,?,?,?)')
-    .run(p.id, b.title, JSON.stringify(b.blocks || []), maxPos + 1);
+  const r = db.prepare('INSERT INTO lessons (module_id, title, blocks_json, position, created_by) VALUES (?,?,?,?,?)')
+    .run(p.id, b.title, JSON.stringify(b.blocks || []), maxPos + 1, user.id);
   send(res, 200, { id: Number(r.lastInsertRowid) });
-}, { admin: true });
+}, { staff: true });
 
 route('PUT', '/api/admin/lessons/:id', async (req, res, p) => {
   const b = await readBody(req);
@@ -819,14 +847,14 @@ route('PUT', '/api/admin/lessons/:id', async (req, res, p) => {
   db.prepare('UPDATE lessons SET title = ?, blocks_json = ?, position = ? WHERE id = ?')
     .run(b.title, JSON.stringify(b.blocks || []), b.position || 0, p.id);
   send(res, 200, { ok: true });
-}, { admin: true });
+}, { staff: true });
 
 route('DELETE', '/api/admin/lessons/:id', async (req, res, p) => {
   db.prepare('DELETE FROM lessons WHERE id = ?').run(p.id);
   send(res, 200, { ok: true });
-}, { admin: true });
+}, { staff: true });
 
-route('PUT', '/api/admin/modules/:id/quiz', async (req, res, p) => {
+route('PUT', '/api/admin/modules/:id/quiz', async (req, res, p, user) => {
   const { questions } = await readBody(req);
   if (!Array.isArray(questions)) return send(res, 400, { error: 'questions must be an array.' });
   for (const q of questions) {
@@ -836,15 +864,15 @@ route('PUT', '/api/admin/modules/:id/quiz', async (req, res, p) => {
   db.exec('BEGIN');
   try {
     db.prepare('DELETE FROM quiz_questions WHERE module_id = ?').run(p.id);
-    const ins = db.prepare('INSERT INTO quiz_questions (module_id, question, options_json, correct_index, position) VALUES (?,?,?,?,?)');
-    questions.forEach((q, i) => ins.run(p.id, q.question, JSON.stringify(q.options), q.correct_index, i + 1));
+    const ins = db.prepare('INSERT INTO quiz_questions (module_id, question, options_json, correct_index, position, created_by) VALUES (?,?,?,?,?,?)');
+    questions.forEach((q, i) => ins.run(p.id, q.question, JSON.stringify(q.options), q.correct_index, i + 1, user.id));
     db.exec('COMMIT');
   } catch (e) {
     db.exec('ROLLBACK');
     throw e;
   }
   send(res, 200, { ok: true });
-}, { admin: true });
+}, { staff: true });
 
 route('GET', '/api/admin/analytics', async (req, res) => {
   const mods = db.prepare('SELECT id, title, position FROM modules ORDER BY position, id').all();
@@ -890,18 +918,18 @@ route('GET', '/api/admin/analytics', async (req, res) => {
   send(res, 200, { analytics });
 }, { admin: true });
 
-route('POST', '/api/admin/modules/:id/cards', async (req, res, p) => {
+route('POST', '/api/admin/modules/:id/cards', async (req, res, p, user) => {
   const { front, back } = await readBody(req);
   if (!front || !back) return send(res, 400, { error: 'A card needs both a front and a back.' });
   const maxPos = db.prepare('SELECT COALESCE(MAX(position), 0) AS m FROM flashcards WHERE module_id = ?').get(p.id).m;
-  const r = db.prepare("INSERT INTO flashcards (module_id, front, back, source, position) VALUES (?, ?, ?, 'authored', ?)").run(p.id, front.trim(), back.trim(), maxPos + 1);
+  const r = db.prepare("INSERT INTO flashcards (module_id, front, back, source, position, created_by) VALUES (?, ?, ?, 'authored', ?, ?)").run(p.id, front.trim(), back.trim(), maxPos + 1, user.id);
   send(res, 200, { id: Number(r.lastInsertRowid) });
-}, { admin: true });
+}, { staff: true });
 
 route('DELETE', '/api/admin/cards/:id', async (req, res, p) => {
   db.prepare('DELETE FROM flashcards WHERE id = ?').run(p.id);
   send(res, 200, { ok: true });
-}, { admin: true });
+}, { staff: true });
 
 // ----- bulk import (JSON / CSV / XLSX) -----
 function normalizeImport(kind, parsed) {
@@ -1019,7 +1047,7 @@ function normalizeImport(kind, parsed) {
   return { items, errors };
 }
 
-route('POST', '/api/admin/modules/:id/import', async (req, res, p) => {
+route('POST', '/api/admin/modules/:id/import', async (req, res, p, user) => {
   const mod = db.prepare('SELECT id FROM modules WHERE id = ?').get(p.id);
   if (!mod) return send(res, 404, { error: 'Module not found.' });
   const { kind, filename, data_b64 } = await readBody(req, 12e6);
@@ -1047,20 +1075,20 @@ route('POST', '/api/admin/modules/:id/import', async (req, res, p) => {
   try {
     if (kind === 'cards') {
       let pos = db.prepare('SELECT COALESCE(MAX(position), 0) AS m FROM flashcards WHERE module_id = ?').get(p.id).m;
-      const ins = db.prepare("INSERT INTO flashcards (module_id, front, back, source, position) VALUES (?,?,?,'authored',?)");
-      for (const it of items) ins.run(p.id, it.front, it.back, ++pos);
+      const ins = db.prepare("INSERT INTO flashcards (module_id, front, back, source, position, created_by) VALUES (?,?,?,'authored',?,?)");
+      for (const it of items) ins.run(p.id, it.front, it.back, ++pos, user.id);
     } else if (kind === 'questions') {
       let pos = db.prepare('SELECT COALESCE(MAX(position), 0) AS m FROM quiz_questions WHERE module_id = ?').get(p.id).m;
-      const ins = db.prepare('INSERT INTO quiz_questions (module_id, question, options_json, correct_index, position) VALUES (?,?,?,?,?)');
-      for (const it of items) ins.run(p.id, it.question, JSON.stringify(it.options), it.correct_index, ++pos);
+      const ins = db.prepare('INSERT INTO quiz_questions (module_id, question, options_json, correct_index, position, created_by) VALUES (?,?,?,?,?,?)');
+      for (const it of items) ins.run(p.id, it.question, JSON.stringify(it.options), it.correct_index, ++pos, user.id);
     } else if (kind === 'lessons') {
       let pos = db.prepare('SELECT COALESCE(MAX(position), 0) AS m FROM lessons WHERE module_id = ?').get(p.id).m;
-      const ins = db.prepare('INSERT INTO lessons (module_id, title, blocks_json, position) VALUES (?,?,?,?)');
-      for (const it of items) ins.run(p.id, it.title, JSON.stringify(it.blocks), ++pos);
+      const ins = db.prepare('INSERT INTO lessons (module_id, title, blocks_json, position, created_by) VALUES (?,?,?,?,?)');
+      for (const it of items) ins.run(p.id, it.title, JSON.stringify(it.blocks), ++pos, user.id);
     } else if (kind === 'assignments') {
       let pos = db.prepare('SELECT COALESCE(MAX(position), 0) AS m FROM assignments WHERE module_id = ?').get(p.id).m;
-      const ins = db.prepare('INSERT INTO assignments (module_id, title, instructions_html, points, position) VALUES (?,?,?,?,?)');
-      for (const it of items) ins.run(p.id, it.title, it.instructions_html, it.points, ++pos);
+      const ins = db.prepare('INSERT INTO assignments (module_id, title, instructions_html, points, position, created_by) VALUES (?,?,?,?,?,?)');
+      for (const it of items) ins.run(p.id, it.title, it.instructions_html, it.points, ++pos, user.id);
     }
     db.exec('COMMIT');
   } catch (e) {
@@ -1068,17 +1096,17 @@ route('POST', '/api/admin/modules/:id/import', async (req, res, p) => {
     throw e;
   }
   send(res, 200, { imported: items.length, skipped: errors.length, details: errors.slice(0, 6) });
-}, { admin: true });
+}, { staff: true });
 
 // ----- assignments (admin CRUD) -----
-route('POST', '/api/admin/modules/:id/assignments', async (req, res, p) => {
+route('POST', '/api/admin/modules/:id/assignments', async (req, res, p, user) => {
   const b = await readBody(req);
   if (!b.title || !b.title.trim()) return send(res, 400, { error: 'The assignment needs a title.' });
   const maxPos = db.prepare('SELECT COALESCE(MAX(position), 0) AS m FROM assignments WHERE module_id = ?').get(p.id).m;
-  const r = db.prepare('INSERT INTO assignments (module_id, title, instructions_html, points, position) VALUES (?,?,?,?,?)')
-    .run(p.id, b.title.trim(), b.instructions_html || '', b.points || 100, maxPos + 1);
+  const r = db.prepare('INSERT INTO assignments (module_id, title, instructions_html, points, position, created_by) VALUES (?,?,?,?,?,?)')
+    .run(p.id, b.title.trim(), b.instructions_html || '', b.points || 100, maxPos + 1, user.id);
   send(res, 200, { id: Number(r.lastInsertRowid) });
-}, { admin: true });
+}, { staff: true });
 
 route('PUT', '/api/admin/assignments/:id', async (req, res, p) => {
   const b = await readBody(req);
@@ -1086,12 +1114,12 @@ route('PUT', '/api/admin/assignments/:id', async (req, res, p) => {
   db.prepare('UPDATE assignments SET title = ?, instructions_html = ?, points = ?, position = ? WHERE id = ?')
     .run(b.title.trim(), b.instructions_html || '', b.points || 100, b.position || 0, p.id);
   send(res, 200, { ok: true });
-}, { admin: true });
+}, { staff: true });
 
 route('DELETE', '/api/admin/assignments/:id', async (req, res, p) => {
   db.prepare('DELETE FROM assignments WHERE id = ?').run(p.id);
   send(res, 200, { ok: true });
-}, { admin: true });
+}, { staff: true });
 
 // ----- submissions -----
 route('POST', '/api/assignment/:id/submit', async (req, res, p, user) => {
@@ -1146,7 +1174,7 @@ route('GET', '/api/admin/submissions', async (req, res) => {
     JOIN modules m ON m.id = a.module_id
     ORDER BY s.status = 'submitted' DESC, s.submitted_at DESC LIMIT 200`).all();
   send(res, 200, { submissions: subs });
-}, { admin: true });
+}, { staff: true });
 
 route('PUT', '/api/admin/submissions/:id', async (req, res, p) => {
   const b = await readBody(req);
@@ -1157,11 +1185,11 @@ route('PUT', '/api/admin/submissions/:id', async (req, res, p) => {
   db.prepare("UPDATE submissions SET grade = ?, feedback = ?, status = 'graded', graded_at = datetime('now') WHERE id = ?")
     .run(grade, (b.feedback || '').toString(), p.id);
   send(res, 200, { ok: true });
-}, { admin: true });
+}, { staff: true });
 
 route('GET', '/api/admin/users', async (req, res) => {
   const users = db.prepare(`
-    SELECT u.id, u.name, u.email, u.role, u.created_at,
+    SELECT u.id, u.name, u.email, u.role, u.designation, u.created_at,
       (SELECT COUNT(*) FROM enrollments WHERE user_id = u.id) AS owned_count,
       (SELECT COUNT(*) FROM module_completions WHERE user_id = u.id) AS completed_count,
       (SELECT COALESCE(SUM(price_paid), 0) FROM enrollments WHERE user_id = u.id) AS spent
@@ -1169,8 +1197,18 @@ route('GET', '/api/admin/users', async (req, res) => {
   send(res, 200, { users });
 }, { admin: true });
 
+route('PUT', '/api/admin/users/:id/role', async (req, res, p, user) => {
+  const b = await readBody(req);
+  if (!['learner', 'teacher', 'admin'].includes(b.role)) return send(res, 400, { error: 'Role must be learner, teacher, or admin.' });
+  const target = db.prepare('SELECT id FROM users WHERE id = ?').get(p.id);
+  if (!target) return send(res, 404, { error: 'User not found.' });
+  if (Number(p.id) === user.id && b.role !== 'admin') return send(res, 400, { error: "You can't remove your own admin access." });
+  db.prepare('UPDATE users SET role = ?, designation = ? WHERE id = ?').run(b.role, (b.designation || '').trim() || null, p.id);
+  send(res, 200, { ok: true });
+}, { admin: true });
+
 route('GET', '/api/admin/users/:id', async (req, res, p) => {
-  const user = db.prepare('SELECT id, name, email, role, created_at FROM users WHERE id = ?').get(p.id);
+  const user = db.prepare('SELECT id, name, email, role, designation, created_at FROM users WHERE id = ?').get(p.id);
   if (!user) return send(res, 404, { error: 'User not found.' });
   const mods = db.prepare('SELECT * FROM modules ORDER BY position, id').all();
   const rows = mods.map((m) => {
@@ -1216,8 +1254,9 @@ const server = http.createServer(async (req, res) => {
       r.keys.forEach((k, i) => { params[k] = m[i + 1]; });
       try {
         const user = currentUser(req);
-        if ((r.auth || r.admin) && !user) return send(res, 401, { error: 'Please sign in.' });
+        if ((r.auth || r.admin || r.staff) && !user) return send(res, 401, { error: 'Please sign in.' });
         if (r.admin && user.role !== 'admin') return send(res, 403, { error: 'Admin access required.' });
+        if (r.staff && user.role !== 'admin' && user.role !== 'teacher') return send(res, 403, { error: 'Teacher or admin access required.' });
         return await r.handler(req, res, params, user);
       } catch (e) {
         console.error(e);

@@ -832,6 +832,16 @@ table.data .num { font-variant-numeric: tabular-nums; }
 .editor-block .block-head h4 { font-size: 15.5px; }
 .editor-block .block-head .actions { display: flex; gap: 8px; }
 .drag-hint { color: var(--fg-faint); font-size: 12.5px; }
+.author-tag {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 8px;
+  font-size: 12px; color: var(--fg-faint); font-style: italic;
+}
+.author-tag svg { width: 12px; height: 12px; stroke: currentColor; flex: none; }
+.lesson-author, .asg-author {
+  display: flex; align-items: center; gap: 8px; margin-top: 26px; padding-top: 16px;
+  border-top: 1px dashed var(--border); font-size: 13px; color: var(--fg-faint); font-style: italic;
+}
+.lesson-author svg, .asg-author svg { width: 14px; height: 14px; stroke: currentColor; flex: none; }
 
 .q-editor { padding: 18px 20px; margin-bottom: 12px; }
 .q-editor .opt-row { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
@@ -876,6 +886,16 @@ table.data .num { font-variant-numeric: tabular-nums; }
   border-radius: 999px; font-size: 11px; font-weight: 700;
   background: var(--accent); color: #fff; margin-left: 4px;
 }
+
+.recent-chip-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.recent-chip {
+  display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px;
+  border-radius: 999px; background: var(--surface); border: 1px solid var(--border);
+  color: var(--fg-muted); text-decoration: none; font-size: 13.5px; font-weight: 500;
+  transition: border-color 200ms var(--ease), color 200ms var(--ease), transform 200ms var(--ease-spring);
+}
+.recent-chip svg { width: 13px; height: 13px; stroke: var(--success); flex: none; }
+.recent-chip:hover { border-color: rgba(52, 211, 153, 0.4); color: var(--fg); transform: translateY(-2px); }
 
 /* ---------- subjects & tracks ---------- */
 .subject-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
@@ -1029,6 +1049,22 @@ mark.hl { background: rgba(251, 191, 36, 0.25); color: inherit; border-radius: 3
 .import-help code {
   background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px;
   padding: 2px 7px; font-size: 12px; color: var(--accent-bright); overflow-wrap: break-word;
+}
+.block-ref { margin-bottom: 16px; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.block-ref summary {
+  padding: 12px 14px; cursor: pointer; font-size: 13.5px; font-weight: 600; color: var(--fg);
+  background: var(--well-bg); list-style: none; display: flex; align-items: center; gap: 9px;
+}
+.block-ref summary::-webkit-details-marker { display: none; }
+.block-ref summary svg { width: 15px; height: 15px; stroke: var(--accent-bright); flex: none; }
+.block-ref-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; padding: 12px; }
+.block-ref-item { padding: 12px; border-radius: var(--radius-sm); background: var(--well-bg); border: 1px solid var(--border); }
+.block-ref-head { margin-bottom: 6px; }
+.block-ref-item p { font-size: 12.5px; color: var(--fg-muted); margin-bottom: 8px; line-height: 1.45; }
+.block-ref-item code {
+  display: block; background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 11px; line-height: 1.5; color: var(--accent-bright);
+  overflow-wrap: break-word; white-space: pre-wrap;
 }
 .import-drop {
   display: flex; flex-direction: column; align-items: center; gap: 6px;
