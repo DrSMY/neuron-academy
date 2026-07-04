@@ -23,6 +23,9 @@ const ICONS = {
   settings: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3h0a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5h0a1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v0a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
 };
 ICONS.sun = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v2.4m0 14.2v2.4M4.9 4.9l1.7 1.7m10.8 10.8 1.7 1.7M2.5 12h2.4m14.2 0h2.4M4.9 19.1l1.7-1.7M17.4 6.6l1.7-1.7"/></svg>';
+ICONS.upload = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0 4.5 4.5M12 4 7.5 8.5M4 16v3a1.5 1.5 0 0 0 1.5 1.5h13A1.5 1.5 0 0 0 20 19v-3"/></svg>';
+ICONS.inbox = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13h5l1.5 2.5h5L16 13h5M3 13l2.5-8h13L21 13M3 13v6a1.5 1.5 0 0 0 1.5 1.5h15A1.5 1.5 0 0 0 21 19v-6"/></svg>';
+ICONS.file = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2.5h8L19 7.5V20a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 20V4A1.5 1.5 0 0 1 6.5 2.5z"/><path d="M14 2.5v5h5"/></svg>';
 ICONS.moon = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z"/></svg>';
 function icon(n) { return ICONS[n] || ''; }
 
@@ -107,6 +110,7 @@ function shell(content) {
       <button class="side-link ${view === 'overview' ? 'active' : ''}" data-view="overview">${icon('home')} Overview</button>
       <button class="side-link ${view === 'modules' || view === 'editor' ? 'active' : ''}" data-view="modules">${icon('layers')} Modules</button>
       <button class="side-link ${view === 'users' || view === 'userDetail' ? 'active' : ''}" data-view="users">${icon('users')} Users & Pricing</button>
+      <button class="side-link ${view === 'submissions' ? 'active' : ''}" data-view="submissions">${icon('inbox')} Submissions</button>
       <button class="side-link ${view === 'analytics' ? 'active' : ''}" data-view="analytics">${icon('chart')} Analytics</button>
     </aside>
     <main class="admin-main">${content}</main>
@@ -364,7 +368,7 @@ async function renderEditor(moduleId) {
   app.innerHTML = shell('<div class="skeleton" style="min-height:300px"></div>');
   bindShell();
   const d = await api(`/api/admin/modules/${moduleId}/content`);
-  const { module: mod, lessons, questions, cards } = d;
+  const { module: mod, lessons, questions, cards, assignments } = d;
 
   $('.admin-main').innerHTML = `
     <button class="back-link" id="back-mods">${icon('arrowLeft')} All modules</button>
@@ -376,7 +380,11 @@ async function renderEditor(moduleId) {
       <button class="btn btn-ghost" id="edit-meta">${icon('settings')} Module settings</button>
     </div>
 
-    <div class="section-head"><h2>Lessons</h2><button class="btn btn-primary btn-sm" id="add-lesson">${icon('plus')} Add lesson</button></div>
+    <div class="section-head"><h2>Lessons</h2>
+      <span style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" data-import="lessons">${icon('upload')} Import</button>
+        <button class="btn btn-primary btn-sm" id="add-lesson">${icon('plus')} Add lesson</button>
+      </span></div>
     <div id="lesson-list">
       ${lessons.length ? lessons.map((l) => `
         <div class="card editor-block">
@@ -391,7 +399,11 @@ async function renderEditor(moduleId) {
         </div>`).join('') : `<div class="card empty" style="padding:40px">${icon('layers')}<h3>No lessons yet</h3><p>Add the first lesson to start building this module.</p></div>`}
     </div>
 
-    <div class="section-head"><h2>Quiz (${questions.length} questions)</h2><button class="btn btn-primary btn-sm" id="edit-quiz">${icon('edit')} Edit quiz</button></div>
+    <div class="section-head"><h2>Quiz (${questions.length} questions)</h2>
+      <span style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" data-import="questions">${icon('upload')} Import</button>
+        <button class="btn btn-primary btn-sm" id="edit-quiz">${icon('edit')} Edit quiz</button>
+      </span></div>
     <div class="card editor-block">
       ${questions.length ? questions.map((q, i) => `
         <p style="margin:6px 0;color:var(--fg-muted)"><span style="color:var(--accent-bright);font-weight:600">${i + 1}.</span> ${esc(q.question)}
@@ -400,7 +412,8 @@ async function renderEditor(moduleId) {
       <p class="drag-hint" style="margin-top:10px">Pass mark: ${mod.pass_percent}%${mod.quiz_draw > 0 ? ` · each attempt draws ${mod.quiz_draw} random question${mod.quiz_draw === 1 ? '' : 's'} from the bank` : ' · every attempt asks all questions'}</p>
     </div>
 
-    <div class="section-head"><h2>Flashcards (${cards.length})</h2></div>
+    <div class="section-head"><h2>Flashcards (${cards.length})</h2>
+      <button class="btn btn-ghost btn-sm" data-import="cards">${icon('upload')} Import</button></div>
     <div class="card editor-block">
       ${cards.length ? cards.map((c) => `
         <div class="block-head" style="margin:6px 0;align-items:flex-start">
@@ -413,6 +426,24 @@ async function renderEditor(moduleId) {
         <div class="field" style="margin:0"><input id="card-back" placeholder="Back (definition or answer)"></div>
       </div>
       <button class="btn btn-ghost btn-sm" id="add-card" style="margin-top:10px">${icon('plus')} Add flashcard</button>
+    </div>
+
+    <div class="section-head"><h2>Assignments (${assignments.length})</h2>
+      <span style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" data-import="assignments">${icon('upload')} Import</button>
+        <button class="btn btn-primary btn-sm" id="add-asg">${icon('plus')} Add assignment</button>
+      </span></div>
+    <div class="card editor-block">
+      ${assignments.length ? assignments.map((a) => `
+        <div class="block-head" style="margin:8px 0">
+          <h4 style="font-size:14.5px">${esc(a.title)}
+            <span style="color:var(--fg-faint);font-weight:400;font-size:12.5px;margin-left:8px">${a.points} pts · ${a.submission_count} submission${a.submission_count === 1 ? '' : 's'}${a.ungraded_count ? ` · <span style="color:var(--warning)">${a.ungraded_count} to grade</span>` : ''}</span>
+          </h4>
+          <div class="actions">
+            <button class="btn btn-ghost btn-sm" data-edit-asg="${a.id}">${icon('edit')} Edit</button>
+            <button class="btn btn-danger btn-sm" data-del-asg="${a.id}" aria-label="Delete assignment">${icon('trash')}</button>
+          </div>
+        </div>`).join('') : '<p style="color:var(--fg-muted)">No assignments yet. Learners submit written work (plus an optional file) and you grade it in the Submissions inbox.</p>'}
     </div>`;
 
   $('#back-mods').onclick = () => { view = 'modules'; render(); };
@@ -429,6 +460,20 @@ async function renderEditor(moduleId) {
     });
   });
   $('#edit-quiz').onclick = () => quizEditor(moduleId, mod, questions);
+  document.querySelectorAll('[data-import]').forEach((b) => {
+    b.onclick = () => importModal(moduleId, b.dataset.import);
+  });
+  $('#add-asg').onclick = () => assignmentForm(moduleId, null);
+  document.querySelectorAll('[data-edit-asg]').forEach((b) => {
+    b.onclick = () => assignmentForm(moduleId, assignments.find((a) => a.id === Number(b.dataset.editAsg)));
+  });
+  document.querySelectorAll('[data-del-asg]').forEach((b) => {
+    b.onclick = () => confirmDialog('Delete assignment?', 'All learner submissions for it are removed too.', async () => {
+      await api(`/api/admin/assignments/${b.dataset.delAsg}`, { method: 'DELETE' });
+      toast('Assignment deleted.');
+      renderEditor(moduleId);
+    });
+  });
   $('#add-card').onclick = async () => {
     const front = $('#card-front').value.trim();
     const back = $('#card-back').value.trim();
@@ -654,6 +699,198 @@ function quizEditor(moduleId, mod, questions) {
   draw();
 }
 
+// ---------- bulk import ----------
+const IMPORT_SPECS = {
+  cards: {
+    label: 'flashcards',
+    columns: 'front, back',
+    json: '[{ "front": "Term", "back": "Definition" }]',
+    note: 'Two columns — front and back. Files without a header row also work (column 1 = front, column 2 = back).',
+  },
+  questions: {
+    label: 'quiz questions',
+    columns: 'question, correct, option1, option2, option3…',
+    json: '[{ "question": "…", "options": ["A", "B", "C"], "correct_index": 0 }]',
+    note: '"correct" is the option number (1, 2, 3…) or the exact text of the right option. Imported questions join this module\'s question bank.',
+  },
+  lessons: {
+    label: 'lessons',
+    columns: 'title, content (optional: video)',
+    json: '[{ "title": "…", "blocks": [{ "type": "text", "html": "<p>…</p>" }] }]',
+    note: 'Spreadsheets create text lessons (plain text is wrapped into paragraphs; a video column adds an embedded video). JSON supports every block type: text, video, code, order, match, blank.',
+  },
+  assignments: {
+    label: 'assignments',
+    columns: 'title, instructions (optional: points)',
+    json: '[{ "title": "…", "instructions": "What to do", "points": 100 }]',
+    note: 'Points default to 100 when omitted.',
+  },
+};
+
+function importModal(moduleId, kind) {
+  const spec = IMPORT_SPECS[kind];
+  openModal(`
+    <div class="modal-head">
+      <div><h3>Import ${spec.label}</h3><div class="sub">JSON, CSV, or Excel (.xlsx) — dropped straight into this module.</div></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon('x')}</button>
+    </div>
+    <div class="import-help">
+      <p><strong>Spreadsheet / CSV columns:</strong> <code>${esc(spec.columns)}</code></p>
+      <p><strong>JSON shape:</strong> <code>${esc(spec.json)}</code></p>
+      <p class="drag-hint">${spec.note}</p>
+    </div>
+    <label class="import-drop" id="import-drop">
+      ${icon('upload')}
+      <strong id="import-label">Choose a file or drop it here</strong>
+      <span class="drag-hint">.json · .csv · .xlsx — up to 8 MB</span>
+      <input type="file" id="import-file" accept=".json,.csv,.xlsx" hidden>
+    </label>
+    <div id="import-result" style="margin-top:14px"></div>
+    <button class="btn btn-primary" style="width:100%;margin-top:14px" id="import-go" disabled>${icon('upload')} Import</button>`);
+
+  const fileInput = $('#import-file');
+  const drop = $('#import-drop');
+  const goBtn = $('#import-go');
+  let picked = null;
+
+  const setFile = (f) => {
+    if (!f) return;
+    if (f.size > 8 * 1024 * 1024) { toast('Files are limited to 8 MB.', 'error'); return; }
+    picked = f;
+    $('#import-label').textContent = f.name;
+    drop.classList.add('has-file');
+    goBtn.disabled = false;
+  };
+  drop.onclick = () => fileInput.click();
+  fileInput.onchange = () => setFile(fileInput.files[0]);
+  drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('drag'); };
+  drop.ondragleave = () => drop.classList.remove('drag');
+  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('drag'); setFile(e.dataTransfer.files[0]); };
+
+  goBtn.onclick = async () => {
+    if (!picked) return;
+    goBtn.disabled = true;
+    goBtn.innerHTML = '<span class="spinner"></span> Importing…';
+    try {
+      const buf = await picked.arrayBuffer();
+      let b64 = '';
+      const bytes = new Uint8Array(buf);
+      for (let i = 0; i < bytes.length; i += 0x8000) b64 += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      const r = await api(`/api/admin/modules/${moduleId}/import`, { method: 'POST', body: { kind, filename: picked.name, data_b64: btoa(b64) } });
+      const box = $('#import-result');
+      box.innerHTML = `
+        <div class="score-banner pass" style="display:block;padding:14px 18px;margin:0">
+          <strong style="color:var(--success)">✓ Imported ${r.imported} ${spec.label}</strong>
+          ${r.skipped ? `<p style="margin:6px 0 0;font-size:13px;color:var(--fg-muted)">${r.skipped} row${r.skipped === 1 ? '' : 's'} skipped:<br>${r.details.map(esc).join('<br>')}</p>` : ''}
+        </div>`;
+      goBtn.innerHTML = 'Done — close';
+      goBtn.disabled = false;
+      goBtn.onclick = () => { closeModal(); renderEditor(moduleId); };
+      toast(`Imported ${r.imported} ${spec.label}.`);
+    } catch (err) {
+      const box = $('#import-result');
+      box.innerHTML = `<div class="form-error show" style="display:block">${esc(err.message)}${err.details ? '<br>' + err.details.map(esc).join('<br>') : ''}</div>`;
+      goBtn.disabled = false;
+      goBtn.innerHTML = `${icon('upload')} Import`;
+    }
+  };
+}
+
+// ---------- assignments (admin) ----------
+function assignmentForm(moduleId, asg) {
+  openModal(`
+    <div class="modal-head"><h3>${asg ? 'Edit assignment' : 'New assignment'}</h3><button class="icon-btn" data-close aria-label="Close">${icon('x')}</button></div>
+    <form id="asg-form">
+      <div class="field"><label>Title <span class="req">*</span></label><input name="title" value="${esc(asg?.title || '')}" placeholder="e.g. Build a prompt for a support bot" required></div>
+      <div class="field"><label>Instructions (HTML or plain text)</label>
+        <textarea name="instructions_html" style="min-height:160px">${esc(asg?.instructions_html || '')}</textarea>
+        <div class="hint">Learners see this, write their answer, and can attach one file (max 5 MB).</div>
+      </div>
+      <div class="field"><label>Points</label><input name="points" type="number" min="1" value="${asg?.points ?? 100}"></div>
+      <button class="btn btn-primary" style="width:100%" type="submit">${asg ? 'Save assignment' : 'Add assignment'}</button>
+    </form>`, true);
+  $('#asg-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const raw = fd.get('instructions_html').toString();
+    const body = {
+      title: fd.get('title'),
+      instructions_html: /<[a-z][\s\S]*>/i.test(raw) ? raw : `<p>${raw.replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>')}</p>`,
+      points: Number(fd.get('points')) || 100,
+      position: asg?.position,
+    };
+    try {
+      if (asg) await api(`/api/admin/assignments/${asg.id}`, { method: 'PUT', body });
+      else await api(`/api/admin/modules/${moduleId}/assignments`, { method: 'POST', body });
+      closeModal();
+      toast(asg ? 'Assignment saved.' : 'Assignment added.');
+      renderEditor(moduleId);
+    } catch (err) { toast(err.message, 'error'); }
+  };
+}
+
+// ---------- submissions inbox ----------
+async function renderSubmissions() {
+  app.innerHTML = shell('<div class="skeleton" style="min-height:300px"></div>');
+  bindShell();
+  const { submissions } = await api('/api/admin/submissions');
+  $('.admin-main').innerHTML = `
+    <div class="page-head"><span class="eyebrow">Grading</span><h1>Submissions</h1>
+    <p>Newest ungraded work first. Open a submission to grade it and leave feedback.</p></div>
+    <div class="card table-card">
+      ${submissions.length ? `
+      <table class="data">
+        <thead><tr><th>Learner</th><th>Assignment</th><th>Module</th><th>Submitted</th><th>Status</th><th>Grade</th><th></th></tr></thead>
+        <tbody>${submissions.map((s) => `
+          <tr>
+            <td class="t-strong">${esc(s.user_name)}</td>
+            <td>${esc(s.assignment_title)}</td>
+            <td>${esc(s.module_title)}</td>
+            <td>${esc(s.submitted_at.slice(0, 16))}</td>
+            <td>${s.status === 'graded' ? `<span class="badge completed">${icon('check')} Graded</span>` : '<span class="badge draft">Needs grading</span>'}</td>
+            <td class="num">${s.grade ?? '—'} / ${s.points}</td>
+            <td style="text-align:right"><button class="btn btn-ghost btn-sm" data-grade="${s.id}">${s.status === 'graded' ? 'Review' : 'Grade'}</button></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>` : `<div class="empty">${icon('inbox')}<h3>No submissions yet</h3><p>When learners submit assignments they land here for grading.</p></div>`}
+    </div>`;
+
+  document.querySelectorAll('[data-grade]').forEach((b) => {
+    b.onclick = () => {
+      const s = submissions.find((x) => x.id === Number(b.dataset.grade));
+      openModal(`
+        <div class="modal-head">
+          <div><h3>${esc(s.assignment_title)}</h3><div class="sub">${esc(s.user_name)} (${esc(s.email)}) · ${esc(s.module_title)} · submitted ${esc(s.submitted_at.slice(0, 16))}</div></div>
+          <button class="icon-btn" data-close aria-label="Close">${icon('x')}</button>
+        </div>
+        <div class="sub-view">
+          ${s.content_text ? `<div class="sub-text">${esc(s.content_text).replace(/\n/g, '<br>')}</div>` : '<p class="drag-hint">No written answer.</p>'}
+          ${s.file_name ? `<a class="btn btn-ghost btn-sm" href="/api/submission/${s.id}/file" style="margin-top:10px">${icon('file')} ${esc(s.file_name)}</a>` : ''}
+        </div>
+        <form id="grade-form" style="margin-top:18px">
+          <div class="row-2">
+            <div class="field"><label>Grade (out of ${s.points}) <span class="req">*</span></label>
+              <input name="grade" type="number" min="0" max="${s.points}" value="${s.grade ?? ''}" required></div>
+            <div class="field"><label>&nbsp;</label>
+              <div class="hint" style="margin-top:12px">${s.status === 'graded' ? `Graded ${esc((s.graded_at || '').slice(0, 16))} — regrading replaces it.` : 'Grading locks the learner’s submission.'}</div></div>
+          </div>
+          <div class="field"><label>Feedback</label><textarea name="feedback" style="min-height:90px" placeholder="What was strong, what to improve…">${esc(s.feedback || '')}</textarea></div>
+          <button class="btn btn-primary" style="width:100%" type="submit">Save grade</button>
+        </form>`, true);
+      $('#grade-form').onsubmit = async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        try {
+          await api(`/api/admin/submissions/${s.id}`, { method: 'PUT', body: { grade: Number(fd.get('grade')), feedback: fd.get('feedback') } });
+          closeModal();
+          toast('Grade saved.');
+          renderSubmissions();
+        } catch (err) { toast(err.message, 'error'); }
+      };
+    };
+  });
+}
+
 // ---------- analytics ----------
 function funnelBar(label, value, max, cls = '') {
   const pct = max > 0 ? Math.round((value / max) * 100) : 0;
@@ -793,7 +1030,7 @@ async function renderUserDetail(userId) {
 
 // ---------- router ----------
 function render() {
-  const views = { overview: renderOverview, modules: renderModules, users: renderUsers, analytics: renderAnalytics };
+  const views = { overview: renderOverview, modules: renderModules, users: renderUsers, analytics: renderAnalytics, submissions: renderSubmissions };
   (views[view] || renderOverview)().catch((err) => {
     if (err.status === 401 || err.status === 403) location.href = '/';
     else toast(err.message, 'error');

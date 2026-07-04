@@ -139,6 +139,28 @@ CREATE TABLE IF NOT EXISTS notes (
   content TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS assignments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  module_id INTEGER NOT NULL REFERENCES modules(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  instructions_html TEXT NOT NULL DEFAULT '',
+  points INTEGER NOT NULL DEFAULT 100,
+  position INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS submissions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  assignment_id INTEGER NOT NULL REFERENCES assignments(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content_text TEXT NOT NULL DEFAULT '',
+  file_name TEXT,
+  file_blob BLOB,
+  status TEXT NOT NULL DEFAULT 'submitted',
+  grade INTEGER,
+  feedback TEXT,
+  submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
+  graded_at TEXT,
+  UNIQUE (assignment_id, user_id)
+);
 CREATE TABLE IF NOT EXISTS certificates (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

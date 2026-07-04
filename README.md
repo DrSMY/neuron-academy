@@ -46,6 +46,16 @@ Content is organised as **Subjects → Tracks → Modules → Lessons**:
 - **Cmd/Ctrl+K palette** — fuzzy search across modules, lessons, and actions
 - **Ask the tutor** — collapsed panel in every lesson, currently a stub (see below)
 
+## Bulk import & assignments
+
+- **Import anything from files** — every content section in the module editor (Lessons, Quiz questions, Flashcards, Assignments) has an *Import* button accepting **JSON, CSV, or Excel (.xlsx)** via a drag-and-drop zone. Parsers are zero-dependency (hand-rolled CSV state machine and a minimal xlsx reader in `server.js`). Videos remain URL-only by design — paste an embed URL in a video block.
+  - Flashcards: columns `front, back` (header optional)
+  - Questions: `question, correct, option1…optionN` — `correct` is the option number or its exact text; JSON uses `{question, options[], correct_index}`
+  - Lessons: `title, content` (+optional `video`) for spreadsheets; JSON supports full interactive blocks
+  - Assignments: `title, instructions` (+optional `points`)
+  - Skipped rows are reported with reasons; imports append after existing content.
+- **Assignments** — admin creates them per module (or imports them); learners see them in the module contents between lessons and the quiz, write an answer, optionally attach a file (≤5 MB, stored in SQLite), and can resubmit until graded (+20 XP on first submit). Admin grades from the **Submissions** inbox (view text, download file, score + feedback); grading locks the learner's submission and shows them the feedback. Assignments don't gate module completion.
+
 ## Admin features (`/admin`)
 
 - Overview dashboard: learners, enrollments, simulated revenue, completions, recent purchases

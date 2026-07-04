@@ -28,6 +28,8 @@ const ICONS = {
   award: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="9" r="6"/><path d="M8.5 14 7 22l5-3 5 3-1.5-8"/></svg>',
   note: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v12l-4 4H4z"/><path d="M16 20v-4h4M8 9h8M8 13h5"/></svg>',
   bot: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V4m0 0h3M9 19v2m6-2v2"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/></svg>',
+  file: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2.5h8L19 7.5V20a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 20V4A1.5 1.5 0 0 1 6.5 2.5z"/><path d="M14 2.5v5h5"/></svg>',
+  clipboard: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4a2 2 0 0 1 6 0M9 11h6M9 15h4"/></svg>',
   search: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
   sun: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v2.4m0 14.2v2.4M4.9 4.9l1.7 1.7m10.8 10.8 1.7 1.7M2.5 12h2.4m14.2 0h2.4M4.9 19.1l1.7-1.7M17.4 6.6l1.7-1.7"/></svg>',
   moon: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z"/></svg>',
@@ -433,7 +435,9 @@ async function renderModule(id, lessonIdx = 0) {
   try {
     const { module: mod } = await api(`/api/module/${id}`);
     currentModule = mod;
-    currentLessonIdx = Math.min(lessonIdx, mod.lessons.length); // lessons.length == quiz index
+    // index space: lessons, then assignments, then the quiz
+    const maxIdx = mod.lessons.length + (mod.assignments?.length || 0);
+    currentLessonIdx = Math.min(lessonIdx, maxIdx);
     drawModule();
   } catch (err) {
     if (err.status === 401) { me = null; render(); return; }
@@ -447,15 +451,22 @@ async function renderModule(id, lessonIdx = 0) {
 
 function drawModule() {
   const mod = currentModule;
-  const isQuiz = currentLessonIdx >= mod.lessons.length;
+  const L = mod.lessons.length;
+  const A = mod.assignments?.length || 0;
+  const isQuiz = currentLessonIdx >= L + A;
+  const isAssignment = !isQuiz && currentLessonIdx >= L;
   const hasQuiz = mod.quiz.length > 0;
 
   const navItems = mod.lessons.map((l, i) => `
     <button class="lesson-item ${l.done ? 'done' : ''} ${i === currentLessonIdx ? 'active' : ''}" data-idx="${i}">
       <span class="dot">${l.done ? icon('check') : i + 1}</span>
       <span>${esc(l.title)}</span>
+    </button>`).join('') + (mod.assignments || []).map((a, i) => `
+    <button class="lesson-item asg-item ${a.submission ? 'done' : ''} ${L + i === currentLessonIdx ? 'active' : ''}" data-idx="${L + i}">
+      <span class="dot">${a.submission?.status === 'graded' ? icon('check') : icon('clipboard')}</span>
+      <span>${esc(a.title)}</span>
     </button>`).join('') + (hasQuiz ? `
-    <button class="lesson-item quiz-item ${isQuiz ? 'active' : ''} ${mod.completed ? 'done' : ''}" data-idx="${mod.lessons.length}">
+    <button class="lesson-item quiz-item ${isQuiz ? 'active' : ''} ${mod.completed ? 'done' : ''}" data-idx="${L + A}">
       <span class="dot">${mod.completed ? icon('check') : '?'}</span>
       <span>Final quiz</span>
     </button>` : '');
@@ -477,7 +488,105 @@ function drawModule() {
     b.onclick = () => { currentLessonIdx = Number(b.dataset.idx); drawModule(); };
   });
 
-  if (isQuiz) drawQuiz(); else drawLesson();
+  if (isQuiz) drawQuiz();
+  else if (isAssignment) drawAssignment();
+  else drawLesson();
+}
+
+// ---------- assignment view ----------
+function drawAssignment() {
+  const mod = currentModule;
+  const L = mod.lessons.length;
+  const A = mod.assignments.length;
+  const ai = currentLessonIdx - L;
+  const a = mod.assignments[ai];
+  const sub = a.submission;
+  const graded = sub?.status === 'graded';
+  const panel = $('#lesson-panel');
+
+  panel.innerHTML = `
+    <h2>${esc(a.title)}</h2>
+    <div class="asg-meta">
+      <span class="badge level">${a.points} points</span>
+      ${graded ? `<span class="badge completed">${icon('check')} Graded: ${sub.grade}/${a.points}</span>`
+        : sub ? `<span class="badge ready">${icon('check')} Submitted ${esc(sub.submitted_at.slice(0, 16))}</span>`
+        : `<span class="badge locked">Not submitted yet</span>`}
+    </div>
+    ${graded && sub.feedback ? `
+    <div class="score-banner pass" style="display:block;padding:16px 20px">
+      <strong style="color:var(--success)">Feedback from your instructor</strong>
+      <p style="margin:8px 0 0;color:var(--fg)">${esc(sub.feedback).replace(/\n/g, '<br>')}</p>
+    </div>` : ''}
+    <div class="lesson-content">${a.instructions_html}</div>
+    <div class="asg-form">
+      <div class="field">
+        <label for="asg-text">Your answer ${graded ? '(locked after grading)' : ''}</label>
+        <textarea id="asg-text" style="min-height:150px" ${graded ? 'disabled' : ''} placeholder="Write your answer here…">${esc(sub?.content_text || '')}</textarea>
+      </div>
+      <div class="asg-file-row">
+        ${sub?.file_name ? `<a class="btn btn-ghost btn-sm" href="/api/submission/${sub.id}/file">${icon('file')} ${esc(sub.file_name)}</a>` : ''}
+        ${graded ? '' : `
+        <label class="btn btn-ghost btn-sm" style="cursor:pointer">${icon('file')} ${sub?.file_name ? 'Replace file' : 'Attach a file'}
+          <input type="file" id="asg-file" hidden></label>
+        <span class="gate-hint" id="asg-file-name"></span>`}
+      </div>
+      ${graded ? '' : `<button class="btn btn-primary" id="asg-submit" style="margin-top:14px">${sub ? 'Update submission' : 'Submit assignment'} ${icon('arrowRight')}</button>`}
+      <p class="hint-text" style="margin-top:10px">${graded ? 'This assignment has been graded — contact your instructor if something looks wrong.' : 'You can resubmit as often as you like until it\'s graded. Max file size 5 MB.'}</p>
+    </div>
+    <div class="lesson-foot">
+      <button class="btn btn-ghost" id="prev-btn">${icon('arrowLeft')} Previous</button>
+      ${ai < A - 1 || mod.quiz.length ? `<button class="btn btn-ghost" id="next-btn-a">Next ${icon('arrowRight')}</button>` : ''}
+    </div>`;
+
+  $('#prev-btn').onclick = () => { currentLessonIdx--; drawModule(); };
+  const nextA = $('#next-btn-a');
+  if (nextA) nextA.onclick = () => { currentLessonIdx++; drawModule(); };
+
+  if (graded) return;
+
+  let pickedFile = null;
+  const fileInput = $('#asg-file');
+  if (fileInput) fileInput.onchange = () => {
+    const f = fileInput.files[0];
+    if (!f) return;
+    if (f.size > 5 * 1024 * 1024) { toast('Files are limited to 5 MB.', 'error'); fileInput.value = ''; return; }
+    pickedFile = f;
+    $('#asg-file-name').textContent = f.name;
+  };
+
+  $('#asg-submit').onclick = async () => {
+    const btn = $('#asg-submit');
+    const text = $('#asg-text').value;
+    if (!text.trim() && !pickedFile && !sub?.file_name) { toast('Write something or attach a file first.', 'error'); return; }
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Submitting…';
+    try {
+      const body = { content_text: text };
+      if (pickedFile) {
+        const buf = new Uint8Array(await pickedFile.arrayBuffer());
+        let b64 = '';
+        for (let i = 0; i < buf.length; i += 0x8000) b64 += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+        body.file_b64 = btoa(b64);
+        body.file_name = pickedFile.name;
+      }
+      const r = await api(`/api/assignment/${a.id}/submit`, { method: 'POST', body });
+      const fresh = await api(`/api/module/${mod.id}`);
+      currentModule = fresh.module;
+      if (r.firstTime) {
+        toast('Assignment submitted — +20 XP!');
+        refreshMe().then(() => {
+          const chip = $('#streak-chip');
+          if (chip && meStats) { chip.classList.toggle('lit', meStats.activeToday); chip.querySelector('span').textContent = meStats.streak; }
+        });
+        await celebrateLesson();
+      } else toast('Submission updated.');
+      drawModule();
+    } catch (err) {
+      toast(err.message, 'error');
+      btn.disabled = false;
+      btn.innerHTML = `${sub ? 'Update submission' : 'Submit assignment'} ${icon('arrowRight')}`;
+    }
+  };
 }
 
 // ---------- lesson blocks ----------
@@ -833,6 +942,10 @@ function drawLesson() {
   const panel = $('#lesson-panel');
   const last = currentLessonIdx === mod.lessons.length - 1;
   const hasQuiz = mod.quiz.length > 0;
+  const A = mod.assignments?.length || 0;
+  const nextLabel = l.done
+    ? (!last ? 'Next lesson' : A ? 'Go to assignments' : hasQuiz ? 'Go to quiz' : 'Done')
+    : 'Mark complete & continue';
 
   exState.solved = new Set();
   exState.interactive = l.blocks.filter((b) => INTERACTIVE_TYPES.has(b.type)).length;
@@ -845,7 +958,7 @@ function drawLesson() {
       <div class="lesson-foot-right">
         <span class="gate-hint" id="gate-hint"></span>
         <button class="btn btn-primary" id="next-btn">
-          ${l.done ? (last && hasQuiz ? 'Go to quiz' : last ? 'Done' : 'Next lesson') : 'Mark complete & continue'} ${icon('arrowRight')}
+          ${nextLabel} ${icon('arrowRight')}
         </button>
       </div>
     </div>
@@ -896,7 +1009,8 @@ function drawLesson() {
       } catch (err) { toast(err.message, 'error'); btn.disabled = false; return; }
     }
     if (!last) currentLessonIdx++;
-    else if (hasQuiz) currentLessonIdx = mod.lessons.length;
+    else if (A) currentLessonIdx = mod.lessons.length;
+    else if (hasQuiz) currentLessonIdx = mod.lessons.length + A;
     drawModule();
   };
 }
@@ -980,7 +1094,7 @@ function drawQuiz(result = null) {
     $('#quiz-done').onclick = () => { drawQuiz._answers = {}; location.hash = '#/catalog'; };
   } else {
     // Re-fetch so the retry draws a fresh random set from the question bank.
-    $('#quiz-retry').onclick = () => { drawQuiz._answers = {}; renderModule(mod.id, mod.lessons.length); };
+    $('#quiz-retry').onclick = () => { drawQuiz._answers = {}; renderModule(mod.id, mod.lessons.length + (mod.assignments?.length || 0)); };
   }
 }
 

@@ -1,5 +1,6 @@
 'use strict';
 const http = require('node:http');
+const zlib = require('node:zlib');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
@@ -24,12 +25,12 @@ function send(res, status, data, headers = {}) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', ...headers });
   res.end(body);
 }
-function readBody(req) {
+function readBody(req, limit = 1e6) {
   return new Promise((resolve, reject) => {
     let data = '';
     req.on('data', (c) => {
       data += c;
-      if (data.length > 1e6) { reject(new Error('body too large')); req.destroy(); }
+      if (data.length > limit) { reject(new Error('body too large')); req.destroy(); }
     });
     req.on('end', () => {
       try { resolve(data ? JSON.parse(data) : {}); } catch { reject(new Error('invalid JSON')); }
@@ -330,12 +331,18 @@ route('GET', '/api/module/:id', async (req, res, p, user) => {
       return { id: q.id, question: q.question, options: opts };
     });
   const best = db.prepare('SELECT MAX(score) AS s FROM quiz_attempts WHERE user_id = ? AND module_id = ?').get(user.id, mod.id).s;
+  const assignments = db.prepare('SELECT id, title, instructions_html, points, position FROM assignments WHERE module_id = ? ORDER BY position, id').all(mod.id)
+    .map((a) => {
+      const sub = db.prepare('SELECT id, status, grade, feedback, content_text, file_name, submitted_at, graded_at FROM submissions WHERE assignment_id = ? AND user_id = ?').get(a.id, user.id);
+      return { ...a, submission: sub || null };
+    });
   send(res, 200, {
     module: {
       id: mod.id, title: mod.title, description: mod.description, level: mod.level,
       duration_mins: mod.duration_mins, pass_percent: mod.pass_percent,
       completed: isCompleted(user.id, mod.id), bestScore: best,
       lessons: lessons.map((l) => ({ id: l.id, title: l.title, position: l.position, blocks: JSON.parse(l.blocks_json || '[]'), done: doneSet.has(l.id) })),
+      assignments,
       quiz: questions, quiz_bank_size: bankSize,
     },
   });
@@ -651,8 +658,136 @@ route('GET', '/api/admin/modules/:id/content', async (req, res, p) => {
   const questions = db.prepare('SELECT * FROM quiz_questions WHERE module_id = ? ORDER BY position, id').all(p.id)
     .map((q) => ({ ...q, options: JSON.parse(q.options_json) }));
   const cards = db.prepare('SELECT id, front, back, source FROM flashcards WHERE module_id = ? ORDER BY position, id').all(p.id);
-  send(res, 200, { module: mod, lessons, questions, cards });
+  const assignments = db.prepare(`
+    SELECT a.*, (SELECT COUNT(*) FROM submissions WHERE assignment_id = a.id) AS submission_count,
+           (SELECT COUNT(*) FROM submissions WHERE assignment_id = a.id AND status = 'submitted') AS ungraded_count
+    FROM assignments a WHERE a.module_id = ? ORDER BY a.position, a.id`).all(p.id);
+  send(res, 200, { module: mod, lessons, questions, cards, assignments });
 }, { admin: true });
+
+// ---------- file import parsers (zero-dependency) ----------
+function decodeXml(s) {
+  return s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'").replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d))).replace(/&amp;/g, '&');
+}
+
+function parseCSV(text) {
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { cell += '"'; i++; } else inQuotes = false;
+      } else cell += ch;
+    } else if (ch === '"') inQuotes = true;
+    else if (ch === ',') { row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      row.push(cell); cell = '';
+      if (row.some((c) => c.trim() !== '')) rows.push(row);
+      row = [];
+    } else cell += ch;
+  }
+  row.push(cell);
+  if (row.some((c) => c.trim() !== '')) rows.push(row);
+  return rows;
+}
+
+// Minimal .xlsx reader: unzip (central directory + raw deflate), then parse
+// sheet1 + shared strings with regexes. Only string/number cells — plenty for
+// importing tabular training content.
+function unzipEntries(buf) {
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= 0 && i > buf.length - 66000; i--) {
+    if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('Not a valid .xlsx file (zip directory missing).');
+  let off = buf.readUInt32LE(eocd + 16);
+  const count = buf.readUInt16LE(eocd + 10);
+  const files = {};
+  for (let n = 0; n < count; n++) {
+    if (buf.readUInt32LE(off) !== 0x02014b50) break;
+    const method = buf.readUInt16LE(off + 10);
+    const csize = buf.readUInt32LE(off + 20);
+    const nameLen = buf.readUInt16LE(off + 28);
+    const extraLen = buf.readUInt16LE(off + 30);
+    const commentLen = buf.readUInt16LE(off + 32);
+    const localOff = buf.readUInt32LE(off + 42);
+    const name = buf.toString('utf8', off + 46, off + 46 + nameLen);
+    const lNameLen = buf.readUInt16LE(localOff + 26);
+    const lExtraLen = buf.readUInt16LE(localOff + 28);
+    const dataStart = localOff + 30 + lNameLen + lExtraLen;
+    const raw = buf.subarray(dataStart, dataStart + csize);
+    files[name] = () => (method === 8 ? zlib.inflateRawSync(raw) : Buffer.from(raw));
+    off += 46 + nameLen + extraLen + commentLen;
+  }
+  return files;
+}
+
+function colIndex(ref) {
+  let n = 0;
+  for (const ch of ref) {
+    if (ch >= 'A' && ch <= 'Z') n = n * 26 + (ch.charCodeAt(0) - 64);
+    else break;
+  }
+  return n - 1;
+}
+
+function parseXlsx(buf) {
+  const files = unzipEntries(buf);
+  const shared = [];
+  if (files['xl/sharedStrings.xml']) {
+    const xml = files['xl/sharedStrings.xml']().toString('utf8');
+    for (const si of xml.match(/<si[\s>][\s\S]*?<\/si>/g) || []) {
+      let text = '';
+      for (const t of si.match(/<t[^>]*>[\s\S]*?<\/t>/g) || []) text += decodeXml(t.replace(/<t[^>]*>/, '').replace(/<\/t>$/, ''));
+      shared.push(text);
+    }
+  }
+  const sheetName = Object.keys(files).filter((f) => /^xl\/worksheets\/sheet\d+\.xml$/.test(f)).sort()[0];
+  if (!sheetName) throw new Error('No worksheet found in the .xlsx file.');
+  const xml = files[sheetName]().toString('utf8');
+  const rows = [];
+  for (const rowXml of xml.match(/<row[^>]*>[\s\S]*?<\/row>/g) || []) {
+    const row = [];
+    const cellRe = /<c\s([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
+    let m;
+    while ((m = cellRe.exec(rowXml))) {
+      const attrs = m[1];
+      const inner = m[2] || '';
+      const ref = /r="([A-Z]+)\d+"/.exec(attrs);
+      const type = (/t="(\w+)"/.exec(attrs) || [])[1] || 'n';
+      let val = '';
+      if (type === 'inlineStr') {
+        for (const t of inner.match(/<t[^>]*>[\s\S]*?<\/t>/g) || []) val += decodeXml(t.replace(/<t[^>]*>/, '').replace(/<\/t>$/, ''));
+      } else {
+        const v = /<v>([\s\S]*?)<\/v>/.exec(inner);
+        val = v ? decodeXml(v[1]) : '';
+        if (type === 's') val = shared[Number(val)] ?? '';
+      }
+      const idx = ref ? colIndex(ref[1]) : row.length;
+      row[idx] = val;
+    }
+    if (row.some((c) => (c ?? '').toString().trim() !== '')) rows.push([...row].map((c) => (c ?? '').toString()));
+  }
+  return rows;
+}
+
+// Turn a rows-with-headers table into objects; header names lowercased.
+function tableToObjects(rows) {
+  if (!rows.length) return { headers: [], objects: [] };
+  const headers = rows[0].map((h) => (h || '').toString().trim().toLowerCase());
+  const objects = rows.slice(1).map((r) => {
+    const o = {};
+    headers.forEach((h, i) => { if (h) o[h] = (r[i] ?? '').toString().trim(); });
+    return o;
+  });
+  return { headers, objects };
+}
 
 const BLOCK_TYPES = new Set(['text', 'video', 'code', 'order', 'match', 'blank']);
 function validateBlocks(blocks) {
@@ -765,6 +900,245 @@ route('POST', '/api/admin/modules/:id/cards', async (req, res, p) => {
 
 route('DELETE', '/api/admin/cards/:id', async (req, res, p) => {
   db.prepare('DELETE FROM flashcards WHERE id = ?').run(p.id);
+  send(res, 200, { ok: true });
+}, { admin: true });
+
+// ----- bulk import (JSON / CSV / XLSX) -----
+function normalizeImport(kind, parsed) {
+  const errors = [];
+  const items = [];
+  const isTable = Array.isArray(parsed) && Array.isArray(parsed[0]);
+  let list = parsed;
+  if (!isTable) {
+    if (parsed && !Array.isArray(parsed) && Array.isArray(parsed[kind])) list = parsed[kind];
+    if (!Array.isArray(list)) return { items: [], errors: [`Expected a JSON array (or an object with a "${kind}" key).`] };
+  }
+
+  if (kind === 'cards') {
+    let rows;
+    if (isTable) {
+      const { headers, objects } = tableToObjects(parsed);
+      rows = headers.includes('front') && headers.includes('back')
+        ? objects.map((o) => ({ front: o.front, back: o.back }))
+        : parsed.map((r) => ({ front: (r[0] || '').toString().trim(), back: (r[1] || '').toString().trim() }));
+    } else rows = list.map((o) => ({ front: (o.front || '').toString().trim(), back: (o.back || '').toString().trim() }));
+    rows.forEach((r, i) => {
+      if (!r.front || !r.back) { errors.push(`Row ${i + 1}: needs both front and back.`); return; }
+      items.push(r);
+    });
+  }
+
+  if (kind === 'questions') {
+    let rows;
+    if (isTable) {
+      const { headers, objects } = tableToObjects(parsed);
+      if (!headers.includes('question')) return { items: [], errors: ['Missing a "question" column. Expected columns: question, correct, option1, option2, …'] };
+      const optCols = headers.filter((h) => /^option\s*\d+$/i.test(h) || /^option[a-z]?$/i.test(h)).sort();
+      rows = objects.map((o) => ({
+        question: o.question,
+        options: optCols.map((c) => o[c]).filter((v) => v && v.trim() !== ''),
+        correct: o.correct ?? o.answer ?? '',
+      }));
+    } else {
+      rows = list.map((o) => ({
+        question: (o.question || '').toString().trim(),
+        options: Array.isArray(o.options) ? o.options.map((x) => x.toString()) : [],
+        correct: o.correct_index !== undefined ? Number(o.correct_index) + 1 : (o.correct ?? o.answer ?? ''),
+      }));
+    }
+    rows.forEach((r, i) => {
+      if (!r.question) { errors.push(`Row ${i + 1}: empty question.`); return; }
+      if (r.options.length < 2) { errors.push(`Row ${i + 1}: needs at least 2 options.`); return; }
+      let ci = -1;
+      const c = r.correct.toString().trim();
+      if (/^\d+$/.test(c)) ci = Number(c) - 1;
+      else ci = r.options.findIndex((o) => o.trim().toLowerCase() === c.toLowerCase());
+      if (ci < 0 || ci >= r.options.length) { errors.push(`Row ${i + 1}: "correct" must be an option number (1-${r.options.length}) or the exact text of the right option.`); return; }
+      items.push({ question: r.question, options: r.options, correct_index: ci });
+    });
+  }
+
+  if (kind === 'lessons') {
+    let rows;
+    if (isTable) {
+      const { headers, objects } = tableToObjects(parsed);
+      if (!headers.includes('title')) return { items: [], errors: ['Missing a "title" column. Expected columns: title, content (optional: video).'] };
+      rows = objects.map((o) => ({ title: o.title, content: o.content || o.html || '', video: o.video || '' }));
+    } else rows = list;
+    rows.forEach((r, i) => {
+      const title = (r.title || '').toString().trim();
+      if (!title) { errors.push(`Row ${i + 1}: lesson needs a title.`); return; }
+      let blocks = r.blocks;
+      if (!Array.isArray(blocks)) {
+        blocks = [];
+        if (r.video) blocks.push({ type: 'video', url: r.video.toString().trim() });
+        const html = (r.content || r.html || '').toString();
+        if (html) blocks.push({ type: 'text', html: /<[a-z][\s\S]*>/i.test(html) ? html : `<p>${html.replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>')}</p>` });
+      }
+      const err = validateBlocks(blocks);
+      if (err) { errors.push(`Row ${i + 1} (${title}): ${err}`); return; }
+      if (!blocks.length) { errors.push(`Row ${i + 1} (${title}): no content.`); return; }
+      items.push({ title, blocks });
+    });
+  }
+
+  if (kind === 'assignments') {
+    let rows;
+    if (isTable) {
+      const { headers, objects } = tableToObjects(parsed);
+      if (!headers.includes('title')) return { items: [], errors: ['Missing a "title" column. Expected columns: title, instructions (optional: points).'] };
+      rows = objects.map((o) => ({ title: o.title, instructions: o.instructions || '', points: o.points }));
+    } else rows = list.map((o) => ({ title: o.title, instructions: o.instructions_html || o.instructions || '', points: o.points }));
+    rows.forEach((r, i) => {
+      const title = (r.title || '').toString().trim();
+      if (!title) { errors.push(`Row ${i + 1}: assignment needs a title.`); return; }
+      const points = r.points === undefined || r.points === '' ? 100 : Number(r.points);
+      if (Number.isNaN(points) || points < 0) { errors.push(`Row ${i + 1} (${title}): points must be a positive number.`); return; }
+      const html = (r.instructions || '').toString();
+      items.push({ title, instructions_html: /<[a-z][\s\S]*>/i.test(html) ? html : `<p>${html.replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>')}</p>`, points });
+    });
+  }
+
+  return { items, errors };
+}
+
+route('POST', '/api/admin/modules/:id/import', async (req, res, p) => {
+  const mod = db.prepare('SELECT id FROM modules WHERE id = ?').get(p.id);
+  if (!mod) return send(res, 404, { error: 'Module not found.' });
+  const { kind, filename, data_b64 } = await readBody(req, 12e6);
+  if (!['cards', 'questions', 'lessons', 'assignments'].includes(kind)) return send(res, 400, { error: 'Unknown import kind.' });
+  if (!data_b64) return send(res, 400, { error: 'No file received.' });
+  const buf = Buffer.from(data_b64, 'base64');
+
+  let parsed;
+  try {
+    const name = (filename || '').toLowerCase();
+    if (name.endsWith('.xlsx') || (buf[0] === 0x50 && buf[1] === 0x4b)) parsed = parseXlsx(buf);
+    else {
+      const text = buf.toString('utf8').replace(/^﻿/, '');
+      if (name.endsWith('.json') || /^\s*[[{]/.test(text)) parsed = JSON.parse(text);
+      else parsed = parseCSV(text);
+    }
+  } catch (e) {
+    return send(res, 400, { error: `Could not read the file: ${e.message}` });
+  }
+
+  const { items, errors } = normalizeImport(kind, parsed);
+  if (!items.length) return send(res, 400, { error: 'Nothing importable found.', details: errors.slice(0, 6) });
+
+  db.exec('BEGIN');
+  try {
+    if (kind === 'cards') {
+      let pos = db.prepare('SELECT COALESCE(MAX(position), 0) AS m FROM flashcards WHERE module_id = ?').get(p.id).m;
+      const ins = db.prepare("INSERT INTO flashcards (module_id, front, back, source, position) VALUES (?,?,?,'authored',?)");
+      for (const it of items) ins.run(p.id, it.front, it.back, ++pos);
+    } else if (kind === 'questions') {
+      let pos = db.prepare('SELECT COALESCE(MAX(position), 0) AS m FROM quiz_questions WHERE module_id = ?').get(p.id).m;
+      const ins = db.prepare('INSERT INTO quiz_questions (module_id, question, options_json, correct_index, position) VALUES (?,?,?,?,?)');
+      for (const it of items) ins.run(p.id, it.question, JSON.stringify(it.options), it.correct_index, ++pos);
+    } else if (kind === 'lessons') {
+      let pos = db.prepare('SELECT COALESCE(MAX(position), 0) AS m FROM lessons WHERE module_id = ?').get(p.id).m;
+      const ins = db.prepare('INSERT INTO lessons (module_id, title, blocks_json, position) VALUES (?,?,?,?)');
+      for (const it of items) ins.run(p.id, it.title, JSON.stringify(it.blocks), ++pos);
+    } else if (kind === 'assignments') {
+      let pos = db.prepare('SELECT COALESCE(MAX(position), 0) AS m FROM assignments WHERE module_id = ?').get(p.id).m;
+      const ins = db.prepare('INSERT INTO assignments (module_id, title, instructions_html, points, position) VALUES (?,?,?,?,?)');
+      for (const it of items) ins.run(p.id, it.title, it.instructions_html, it.points, ++pos);
+    }
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+  send(res, 200, { imported: items.length, skipped: errors.length, details: errors.slice(0, 6) });
+}, { admin: true });
+
+// ----- assignments (admin CRUD) -----
+route('POST', '/api/admin/modules/:id/assignments', async (req, res, p) => {
+  const b = await readBody(req);
+  if (!b.title || !b.title.trim()) return send(res, 400, { error: 'The assignment needs a title.' });
+  const maxPos = db.prepare('SELECT COALESCE(MAX(position), 0) AS m FROM assignments WHERE module_id = ?').get(p.id).m;
+  const r = db.prepare('INSERT INTO assignments (module_id, title, instructions_html, points, position) VALUES (?,?,?,?,?)')
+    .run(p.id, b.title.trim(), b.instructions_html || '', b.points || 100, maxPos + 1);
+  send(res, 200, { id: Number(r.lastInsertRowid) });
+}, { admin: true });
+
+route('PUT', '/api/admin/assignments/:id', async (req, res, p) => {
+  const b = await readBody(req);
+  if (!b.title || !b.title.trim()) return send(res, 400, { error: 'The assignment needs a title.' });
+  db.prepare('UPDATE assignments SET title = ?, instructions_html = ?, points = ?, position = ? WHERE id = ?')
+    .run(b.title.trim(), b.instructions_html || '', b.points || 100, b.position || 0, p.id);
+  send(res, 200, { ok: true });
+}, { admin: true });
+
+route('DELETE', '/api/admin/assignments/:id', async (req, res, p) => {
+  db.prepare('DELETE FROM assignments WHERE id = ?').run(p.id);
+  send(res, 200, { ok: true });
+}, { admin: true });
+
+// ----- submissions -----
+route('POST', '/api/assignment/:id/submit', async (req, res, p, user) => {
+  const asg = db.prepare('SELECT a.*, m.id AS mod_id FROM assignments a JOIN modules m ON m.id = a.module_id WHERE a.id = ?').get(p.id);
+  if (!asg) return send(res, 404, { error: 'Assignment not found.' });
+  if (!isOwned(user.id, asg.mod_id)) return send(res, 403, { error: 'Not enrolled in this module.' });
+  const existing = db.prepare('SELECT id, status FROM submissions WHERE assignment_id = ? AND user_id = ?').get(p.id, user.id);
+  if (existing && existing.status === 'graded') return send(res, 409, { error: 'This submission was already graded — it can no longer be changed.' });
+  const b = await readBody(req, 8e6);
+  const text = (b.content_text || '').toString().trim();
+  let fileName = null;
+  let fileBlob = null;
+  if (b.file_b64) {
+    fileBlob = Buffer.from(b.file_b64, 'base64');
+    if (fileBlob.length > 5 * 1024 * 1024) return send(res, 400, { error: 'Files are limited to 5 MB.' });
+    fileName = (b.file_name || 'attachment').toString().replace(/[^\w.\- ()]/g, '_').slice(0, 120);
+  }
+  if (!text && !fileBlob) return send(res, 400, { error: 'Write something or attach a file before submitting.' });
+  db.prepare(`
+    INSERT INTO submissions (assignment_id, user_id, content_text, file_name, file_blob, status, submitted_at)
+    VALUES (?, ?, ?, ?, ?, 'submitted', datetime('now'))
+    ON CONFLICT(assignment_id, user_id) DO UPDATE SET content_text = excluded.content_text,
+      file_name = COALESCE(excluded.file_name, file_name), file_blob = COALESCE(excluded.file_blob, file_blob),
+      status = 'submitted', submitted_at = excluded.submitted_at`)
+    .run(p.id, user.id, text, fileName, fileBlob);
+  if (!existing) award(user.id, 'assignment', 20, asg.mod_id);
+  send(res, 200, { ok: true, firstTime: !existing, xpGained: existing ? 0 : 20 });
+}, { auth: true });
+
+route('GET', '/api/submission/:id/file', async (req, res, p, user) => {
+  const sub = db.prepare('SELECT user_id, file_name, file_blob FROM submissions WHERE id = ?').get(p.id);
+  if (!sub || !sub.file_blob) return send(res, 404, { error: 'No file on this submission.' });
+  if (sub.user_id !== user.id && user.role !== 'admin') return send(res, 403, { error: 'Not yours to download.' });
+  res.writeHead(200, {
+    'Content-Type': 'application/octet-stream',
+    'Content-Disposition': `attachment; filename="${sub.file_name || 'attachment'}"`,
+    'Content-Length': sub.file_blob.length,
+  });
+  res.end(Buffer.from(sub.file_blob));
+}, { auth: true });
+
+route('GET', '/api/admin/submissions', async (req, res) => {
+  const subs = db.prepare(`
+    SELECT s.id, s.status, s.grade, s.feedback, s.submitted_at, s.graded_at,
+           s.content_text, s.file_name,
+           u.name AS user_name, u.email,
+           a.title AS assignment_title, a.points,
+           m.title AS module_title
+    FROM submissions s
+    JOIN users u ON u.id = s.user_id
+    JOIN assignments a ON a.id = s.assignment_id
+    JOIN modules m ON m.id = a.module_id
+    ORDER BY s.status = 'submitted' DESC, s.submitted_at DESC LIMIT 200`).all();
+  send(res, 200, { submissions: subs });
+}, { admin: true });
+
+route('PUT', '/api/admin/submissions/:id', async (req, res, p) => {
+  const b = await readBody(req);
+  const sub = db.prepare('SELECT s.id, a.points FROM submissions s JOIN assignments a ON a.id = s.assignment_id WHERE s.id = ?').get(p.id);
+  if (!sub) return send(res, 404, { error: 'Submission not found.' });
+  const grade = Number(b.grade);
+  if (Number.isNaN(grade) || grade < 0 || grade > sub.points) return send(res, 400, { error: `Grade must be between 0 and ${sub.points}.` });
+  db.prepare("UPDATE submissions SET grade = ?, feedback = ?, status = 'graded', graded_at = datetime('now') WHERE id = ?")
+    .run(grade, (b.feedback || '').toString(), p.id);
   send(res, 200, { ok: true });
 }, { admin: true });
 
