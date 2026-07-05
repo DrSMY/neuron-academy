@@ -3,7 +3,7 @@ const { DatabaseSync } = require('node:sqlite');
 const crypto = require('node:crypto');
 const path = require('node:path');
 
-const db = new DatabaseSync(path.join(__dirname, 'platform.db'));
+const db = new DatabaseSync(process.env.DB_PATH || path.join(__dirname, 'platform.db'));
 db.exec('PRAGMA journal_mode = WAL');
 db.exec('PRAGMA foreign_keys = ON');
 
@@ -283,7 +283,7 @@ function seed() {
   const count = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
   if (count > 0) return;
 
-  createUser('Platform Admin', 'admin@platform.ai', 'admin123', 'admin', 'Platform Administrator');
+  createUser('Platform Admin', process.env.ADMIN_EMAIL || 'admin@platform.ai', process.env.ADMIN_PASSWORD || 'admin123', 'admin', 'Platform Administrator');
   const teacherId = createUser('Dr. Amara Okafor', 'teacher@platform.ai', 'teacher123', 'teacher', 'PhD, Machine Learning — Lead Instructor');
 
   const addModule = db.prepare('INSERT INTO modules (title, description, level, duration_mins, base_price, position, published, pass_percent, quiz_draw) VALUES (?,?,?,?,?,?,?,?,?)');

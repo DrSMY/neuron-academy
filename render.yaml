@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: neuroseed
+    runtime: node
+    plan: starter
+    region: oregon
+    buildCommand: npm install
+    startCommand: node server.js
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 22.5.0
+      - key: DB_PATH
+        value: /data/platform.db
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+    disk:
+      name: neuroseed-data
+      mountPath: /data
+      sizeGB: 1
