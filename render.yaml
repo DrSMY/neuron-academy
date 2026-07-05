@@ -9,7 +9,7 @@ services:
     autoDeploy: true
     envVars:
       - key: NODE_VERSION
-        value: 22.5.0
+        value: 22.13.0
       - key: DB_PATH
         value: /data/platform.db
       - key: ADMIN_EMAIL

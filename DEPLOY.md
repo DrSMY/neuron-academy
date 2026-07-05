@@ -2,6 +2,16 @@
 
 Zero-dependency Node 22+ app: `node server.js` serves the API and static files on `PORT` (default 4655). State lives in a SQLite file (`platform.db`) created next to `server.js` on first boot, with automatic seed + migrations.
 
+## Node version: must be ≥22.13.0, not just ≥22.5.0
+
+`node:sqlite` shipped in Node 22.5.0, but **behind the `--experimental-sqlite` CLI flag through 22.12.x** — the flag requirement was only dropped in **22.13.0**. `package.json`'s `engines.node` and this repo's `.node-version` both specify `22.13.0`+ for exactly this reason. If a host is pinned to an earlier 22.x patch (e.g. a literal `22.5.0`), boot fails immediately with:
+
+```
+Error [ERR_UNKNOWN_BUILTIN_MODULE]: No such built-in module: node:sqlite
+```
+
+This bit the Render deploy once already — the blueprint originally pinned `NODE_VERSION: 22.5.0` (the *minimum* version node:sqlite exists in, which is not the same as the minimum version it works in *without a flag*). Fixed by bumping to `22.13.0` in `render.yaml`. If this error ever reappears on any host, check the actual Node version it's running before anything else.
+
 ## The constraint that decides everything
 
 The app uses Node's built-in `node:sqlite` writing to a **local file**. That requires a host with a **persistent disk and a long-running process**.
