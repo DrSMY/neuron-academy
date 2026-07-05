@@ -158,6 +158,11 @@ function bindShell() {
   if (search) search.onclick = () => palette.open();
   const themeBtn = $('#theme-btn');
   if (themeBtn) themeBtn.onclick = () => toggleTheme(themeBtn);
+  bindLogoReplay();
+}
+function bindLogoReplay() {
+  const logo = $('.brand .logo');
+  if (logo) logo.onclick = (e) => { e.preventDefault(); e.stopPropagation(); window.replayEntrance?.(); };
 }
 
 // ---------- auth view ----------
@@ -201,6 +206,7 @@ function renderAuth(mode = 'login') {
   });
   const authThemeBtn = $('#theme-btn');
   if (authThemeBtn) authThemeBtn.onclick = () => toggleTheme(authThemeBtn);
+  bindLogoReplay();
 
   $('#auth-form').onsubmit = async (e) => {
     e.preventDefault();

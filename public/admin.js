@@ -129,6 +129,8 @@ function bindShell() {
   document.querySelectorAll('.side-link').forEach((b) => {
     b.onclick = () => { view = b.dataset.view; render(); };
   });
+  const logo = $('.brand .logo');
+  if (logo) logo.onclick = (e) => { e.preventDefault(); e.stopPropagation(); window.replayEntrance?.(); };
 }
 
 // ---------- overview ----------
