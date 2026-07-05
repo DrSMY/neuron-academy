@@ -126,6 +126,7 @@ function shell(active, content) {
     </aside>
     <div class="main-col">
       <header class="mainbar">
+        <a class="brand mainbar-brand" href="#/learning" aria-label="NeuroSeed"><span class="logo">${icon('logo')}</span></a>
         <button class="search-pill" id="search-pill" aria-label="Search (Cmd+K)">
           ${icon('search')}<span>Search modules, lessons…</span><kbd>⌘K</kbd>
         </button>
@@ -161,8 +162,9 @@ function bindShell() {
   bindLogoReplay();
 }
 function bindLogoReplay() {
-  const logo = $('.brand .logo');
-  if (logo) logo.onclick = (e) => { e.preventDefault(); e.stopPropagation(); window.replayEntrance?.(); };
+  document.querySelectorAll('.brand .logo').forEach((logo) => {
+    logo.onclick = (e) => { e.preventDefault(); e.stopPropagation(); window.replayEntrance?.(); };
+  });
 }
 
 // ---------- auth view ----------
