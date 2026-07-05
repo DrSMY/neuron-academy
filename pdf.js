@@ -26,20 +26,20 @@ function centered(text, y, size, font, color, letterSpace = 0) {
 function makeCertificatePdf({ name, moduleTitle, date, code, verifyUrl }) {
   let content = '';
   // background
-  content += `0.028 0.028 0.075 rg 0 0 ${PAGE_W} ${PAGE_H} re f\n`;
+  content += `0.035 0.047 0.086 rg 0 0 ${PAGE_W} ${PAGE_H} re f\n`;
   // outer accent border + inner hairline
-  content += `0.42 0.47 0.95 RG 2.5 w 28 28 ${PAGE_W - 56} ${PAGE_H - 56} re S\n`;
-  content += `0.35 0.36 0.55 RG 0.7 w 38 38 ${PAGE_W - 76} ${PAGE_H - 76} re S\n`;
+  content += `0.84 0.70 0.42 RG 2.5 w 28 28 ${PAGE_W - 56} ${PAGE_H - 56} re S\n`;
+  content += `0.45 0.42 0.34 RG 0.7 w 38 38 ${PAGE_W - 76} ${PAGE_H - 76} re S\n`;
   // top + bottom accent bars
-  content += `0.42 0.47 0.95 rg ${PAGE_W / 2 - 40} 500 80 3 re f\n`;
-  content += `0.42 0.47 0.95 rg ${PAGE_W / 2 - 40} 118 80 2 re f\n`;
+  content += `0.84 0.70 0.42 rg ${PAGE_W / 2 - 40} 500 80 3 re f\n`;
+  content += `0.84 0.70 0.42 rg ${PAGE_W / 2 - 40} 118 80 2 re f\n`;
 
-  content += centered('NEURON ACADEMY', 522, 15, 'F1', '0.55 0.60 0.98', 1);
+  content += centered('NEUROSEED', 522, 15, 'F1', '0.91 0.78 0.50', 1);
   content += centered('CERTIFICATE OF COMPLETION', 458, 30, 'F1', '0.93 0.93 0.95');
   content += centered('This certifies that', 404, 14, 'F2', '0.55 0.57 0.62');
   content += centered(name, 352, 38, 'F1', '1 1 1');
   content += centered('has successfully completed the module', 308, 14, 'F2', '0.55 0.57 0.62');
-  content += centered(moduleTitle, 262, 25, 'F1', '0.62 0.66 1');
+  content += centered(moduleTitle, 262, 25, 'F1', '0.84 0.72 0.46');
   content += centered(`Completed on ${date}`, 210, 13, 'F2', '0.72 0.74 0.78');
   content += centered(`Certificate no. ${code}`, 158, 12, 'F2', '0.55 0.57 0.62');
   content += centered(`Verify at ${verifyUrl}`, 86, 10, 'F2', '0.42 0.44 0.50');

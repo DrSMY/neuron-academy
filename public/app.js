@@ -5,7 +5,7 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const app = $('#app');
 
 const ICONS = {
-  logo: '<svg viewBox="0 0 48 48" aria-hidden="true"><defs><linearGradient id="nlg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><rect width="48" height="48" rx="13" fill="url(#nlg)"/><g stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.9"><path d="M24 24 14 15.5M24 24l10.5-9M24 24l9 10M24 24l-9.5 9.5M24 24V13"/></g><circle cx="24" cy="24" r="4.2" fill="#fff"/><circle cx="14" cy="15.5" r="2.6" fill="#fff"/><circle cx="34.5" cy="15" r="3.2" fill="#67e8f9"/><circle cx="33" cy="34" r="2.8" fill="#fff" opacity="0.9"/><circle cx="14.5" cy="33.5" r="2.2" fill="#fff" opacity="0.75"/><circle cx="24" cy="13" r="2.4" fill="#fff" opacity="0.85"/></svg>',
+  logo: '<svg viewBox="0 0 48 48" aria-hidden="true"><defs><linearGradient id="nsTile" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#141b2e"/><stop offset="1" stop-color="#090c16"/></linearGradient><linearGradient id="nsGold" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#D6B36A"/><stop offset="0.55" stop-color="#E8C67F"/><stop offset="1" stop-color="#FFE8A9"/></linearGradient><radialGradient id="nsGlow" cx="0.5" cy="0.6" r="0.5"><stop offset="0" stop-color="#FFE8A9" stop-opacity="0.38"/><stop offset="1" stop-color="#FFE8A9" stop-opacity="0"/></radialGradient></defs><rect width="48" height="48" rx="13" fill="url(#nsTile)"/><circle cx="24" cy="27" r="15" fill="url(#nsGlow)"/><g stroke="url(#nsGold)" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M24 36C24 31 24 28 24 24"/><path d="M24 36C24 39.5 24 41.5 24 44.5"/><path d="M24 36C21.5 38.5 19 39.5 15.5 43"/><path d="M24 36C26.5 38.5 29 39.5 32.5 43"/><path d="M24 24C24 19 24 15 24 9.5"/><path d="M24 24C20.5 21.8 17.5 20 13.5 17"/><path d="M24 21.5C19.5 18.5 16 15 12.3 10.8"/><path d="M24 22.5C21.5 20 19 18 16.7 15.3"/><path d="M24 24C27.5 21.8 30.5 20 34.5 17"/><path d="M24 21.5C28.5 18.5 32 15 35.7 10.8"/><path d="M24 22.5C26.5 20 29 18 31.3 15.3"/></g><g fill="url(#nsGold)"><circle cx="24" cy="9.5" r="2.1"/><circle cx="13.5" cy="17" r="1.7"/><circle cx="12.3" cy="10.8" r="1.6"/><circle cx="16.7" cy="15.3" r="1.4"/><circle cx="34.5" cy="17" r="1.7"/><circle cx="35.7" cy="10.8" r="1.6"/><circle cx="31.3" cy="15.3" r="1.4"/><circle cx="24" cy="24" r="1.5" fill="#FFE8A9"/></g></svg>',
   home: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8M5 9.5V21h14V9.5"/></svg>',
   layers: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l10 5.5L12 13 2 7.5zM2 12.5 12 18l10-5.5M2 17.5 12 23l10-5.5"/></svg>',
   clock: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
@@ -110,7 +110,7 @@ function shell(active, content) {
   return `
   <div class="app-frame">
     <aside class="sidenav">
-      <a class="brand" href="#/learning"><span class="logo">${icon('logo')}</span><span class="brand-text">Neuron<br><em>Academy</em></span></a>
+      <a class="brand" href="#/learning"><span class="logo">${icon('logo')}</span><span class="brand-text">NeuroSeed<br><em>Growth From Within</em></span></a>
       <nav class="snav">
         ${navItem('catalog', '#/catalog', 'layers', 'Explore')}
         ${navItem('learning', '#/learning', 'book', 'My Learning')}
@@ -166,8 +166,8 @@ function renderAuth(mode = 'login') {
   <div style="position:fixed;top:18px;right:18px;z-index:50">${themeBtnHTML()}</div>
   <div class="auth-wrap">
     <div class="card auth-card">
-      <div class="brand"><span class="logo">${icon('logo')}</span><span class="brand-text">Neuron Academy</span></div>
-      <p class="tagline">Master AI, one module at a time.</p>
+      <div class="brand"><span class="logo">${icon('logo')}</span><span class="brand-text">NeuroSeed</span></div>
+      <p class="tagline">Growth from within, one lesson at a time.</p>
       <div class="auth-tabs" role="tablist">
         <button role="tab" class="${mode === 'login' ? 'active' : ''}" data-mode="login">Sign in</button>
         <button role="tab" class="${mode === 'signup' ? 'active' : ''}" data-mode="signup">Create account</button>
@@ -476,7 +476,7 @@ function drawModule() {
     <div class="page-head" style="margin-bottom:24px">
       <span class="eyebrow">${esc(mod.level)} · ${mod.duration_mins} min</span>
       <h1 style="font-size:28px">${esc(mod.title)}</h1>
-      ${mod.completed ? `<p style="color:var(--success);display:flex;align-items:center;gap:7px;margin-top:6px">${icon('trophy')} Module completed${mod.bestScore !== null ? ` — best score ${mod.bestScore}%` : ''}</p>` : ''}
+      ${mod.completed ? `<p class="mod-status" style="color:var(--success);display:flex;align-items:center;gap:7px;margin-top:6px">${icon('trophy')} Module completed${mod.bestScore !== null ? ` — best score ${mod.bestScore}%` : ''}</p>` : ''}
     </div>
     <div class="detail-layout">
       <aside class="card lesson-nav"><h4>Contents</h4>${navItems}</aside>
@@ -1282,10 +1282,10 @@ function heatmapHTML(heat) {
 }
 
 const THUMB_ART = [
-  ['#6366f1', '#8b5cf6', 'logo'],
-  ['#0891b2', '#22d3ee', 'code'],
-  ['#7c3aed', '#c084fc', 'sparkle'],
-  ['#059669', '#34d399', 'book'],
+  ['#D6B36A', '#FFE8A9', 'logo'],
+  ['#2F8577', '#6FB5A8', 'code'],
+  ['#4B7A3A', '#89A96B', 'sparkle'],
+  ['#8A5F1E', '#D6B36A', 'book'],
 ];
 function thumbHTML(i, size = '') {
   const [c1, c2, ic] = THUMB_ART[i % THUMB_ART.length];
@@ -1315,7 +1315,7 @@ function particleBurst(originEl) {
   const rect = originEl ? originEl.getBoundingClientRect() : { left: innerWidth / 2, top: innerHeight / 2, width: 0, height: 0 };
   const cx = rect.left + rect.width / 2;
   const cy = rect.top + rect.height / 2;
-  const colors = ['#7c8aff', '#8b5cf6', '#22d3ee', '#34d399', '#fbbf24'];
+  const colors = ['#D6B36A', '#FFE8A9', '#89A96B', '#6FB5A8', '#fbbf24'];
   const holder = document.createElement('div');
   holder.className = 'particles';
   for (let i = 0; i < 38; i++) {

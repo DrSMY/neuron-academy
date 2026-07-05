@@ -1,4 +1,4 @@
-# Deploying Neuron Academy
+# Deploying NeuroSeed
 
 Zero-dependency Node 22+ app: `node server.js` serves the API and static files on `PORT` (default 4655). State lives in a SQLite file (`platform.db`) created next to `server.js` on first boot, with automatic seed + migrations.
 

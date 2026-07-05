@@ -1,8 +1,8 @@
-# Neuron Academy — AI Learning Platform
+# NeuroSeed — Growth From Within
 
-A self-hosted learning platform where anyone can sign up and learn AI module by module, with fine-grained admin control over access and per-user pricing. Zero npm dependencies — Node 22's built-in `node:sqlite`, vanilla JS frontends.
+A self-hosted learning platform where anyone can sign up and learn module by module, with fine-grained admin control over access and per-user pricing. Zero npm dependencies — Node 22's built-in `node:sqlite`, vanilla JS frontends.
 
-Design: sidebar app shell with ⌘K search bar, welcome dashboard with progress panel, staggered entrance animations, springy micro-interactions, and a custom SVG neuron logo (defined in `ICONS.logo` in both `app.js` and `admin.js`, plus the favicons in the HTML files). Mobile switches to a bottom tab bar at ≤900px.
+Design: sidebar app shell with ⌘K search bar, gold-on-cosmic tree-of-light brand identity, staggered entrance animations, springy micro-interactions, and a custom SVG tree logo (defined in `ICONS.logo` in both `app.js` and `admin.js`, plus the favicons in the HTML files). Mobile switches to a bottom tab bar at ≤900px. First-ever visit plays a one-time cinematic video entrance (`public/assets/entrance.mp4`), skippable and reduced-motion aware.
 
 **Themes:** bright and dark, toggled from the top bar (sun/moon, persisted in `localStorage` as `na-theme`, defaults to the system preference with a pre-paint script in each HTML file to avoid flash). All theming is token-driven in `styles.css` — dark tokens in `:root`, light overrides in `html[data-theme="light"]`. The code playground intentionally stays dark in light mode.
 

@@ -1,5 +1,5 @@
 {
-  "name": "neuron-academy",
+  "name": "neuroseed",
   "version": "1.0.0",
   "description": "Self-hosted learning platform — subjects, tracks, interactive modules, per-user pricing. Zero dependencies.",
   "main": "server.js",

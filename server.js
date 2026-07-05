@@ -527,7 +527,7 @@ route('GET', '/api/certificate/:id', async (req, res, p, user) => {
   });
   res.writeHead(200, {
     'Content-Type': 'application/pdf',
-    'Content-Disposition': `attachment; filename="neuron-academy-certificate-${code}.pdf"`,
+    'Content-Disposition': `attachment; filename="neuroseed-certificate-${code}.pdf"`,
     'Content-Length': pdf.length,
   });
   res.end(pdf);
@@ -1302,6 +1302,6 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Neuron Academy running at http://localhost:${PORT}`);
+  console.log(`NeuroSeed running at http://localhost:${PORT}`);
   console.log(`Admin panel:            http://localhost:${PORT}/admin`);
 });
