@@ -31,42 +31,33 @@
       var el = document.getElementById('entrance');
       var video = el.querySelector('.entrance-video');
       var dismissed = true;
-      var hardTimeout = null;
 
       function dismiss() {
         if (dismissed) return;
         dismissed = true;
         el.classList.add('hide');
-        if (hardTimeout) { clearTimeout(hardTimeout); hardTimeout = null; }
       }
+      function reveal() { el.classList.add('show-brand'); }
       function play() {
         if (!dismissed) return;
         dismissed = false;
         el.classList.remove('hide', 'show-brand');
         video.currentTime = 0;
         if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
-          el.classList.add('show-brand');
-          hardTimeout = setTimeout(dismiss, 2200);
+          reveal();
           return;
         }
-        video.play().catch(function () {
-          // autoplay blocked (browser policy) — still give the brand its moment, then continue
-          if (hardTimeout) clearTimeout(hardTimeout);
-          el.classList.add('show-brand');
-          hardTimeout = setTimeout(dismiss, 2200);
-        });
-        hardTimeout = setTimeout(dismiss, 12000);
+        video.play().catch(reveal); // autoplay blocked (browser policy) — still give the brand its moment
       }
-      video.addEventListener('ended', dismiss);
-      video.addEventListener('error', dismiss);
+      // the growth clip ends on the logo lighting up; hold there until the visitor acts
+      video.addEventListener('ended', reveal);
+      video.addEventListener('error', reveal);
       video.addEventListener('timeupdate', function () {
-        if (video.duration && video.currentTime >= video.duration - 3) el.classList.add('show-brand');
+        if (video.duration && video.currentTime >= video.duration - 3) reveal();
       });
-      el.querySelector('.entrance-skip').addEventListener('click', dismiss);
-      el.addEventListener('click', function (e) { if (e.target === el || e.target.classList.contains('entrance-scrim')) dismiss(); });
-      document.addEventListener('keydown', function (e) {
-        if (!dismissed && (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ')) dismiss();
-      });
+      // any click or keypress dismisses — nothing auto-closes once shown
+      el.addEventListener('click', dismiss);
+      document.addEventListener('keydown', function () { if (!dismissed) dismiss(); });
       window.replayEntrance = play;
 
       var seen = localStorage.getItem('ns-seen-intro');
