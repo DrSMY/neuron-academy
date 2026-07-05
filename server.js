@@ -45,17 +45,36 @@ function getCookie(req, name) {
   }
   return null;
 }
+// Sessions are stateless, signed cookies (not a DB table) — on serverless hosts
+// like Vercel, concurrent requests can land on different isolated instances
+// that don't share a filesystem/DB, so a DB-backed session lookup would fail
+// unpredictably depending on which instance happened to create the session.
+// A signed cookie carrying the user snapshot works identically everywhere.
+const SESSION_SECRET = process.env.SESSION_SECRET || 'dev-only-insecure-secret-set-SESSION_SECRET-in-production';
+const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+function sign(value) {
+  return crypto.createHmac('sha256', SESSION_SECRET).update(value).digest('hex');
+}
 function currentUser(req) {
   const token = getCookie(req, 'session');
   if (!token) return null;
-  const row = db.prepare(`
-    SELECT u.id, u.name, u.email, u.role, u.designation FROM sessions s
-    JOIN users u ON u.id = s.user_id WHERE s.token = ?`).get(token);
-  return row || null;
+  const dot = token.lastIndexOf('.');
+  if (dot < 0) return null;
+  const encoded = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  if (sig !== sign(encoded)) return null;
+  let payload;
+  try { payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')); } catch { return null; }
+  if (!payload.id || !payload.exp || Date.now() > payload.exp) return null;
+  return { id: payload.id, name: payload.name, email: payload.email, role: payload.role, designation: payload.designation };
 }
-function startSession(res, userId) {
-  const token = crypto.randomBytes(32).toString('hex');
-  db.prepare('INSERT INTO sessions (token, user_id) VALUES (?, ?)').run(token, userId);
+function startSession(res, user) {
+  const payload = {
+    id: user.id, name: user.name, email: user.email, role: user.role, designation: user.designation,
+    exp: Date.now() + SESSION_MAX_AGE_MS,
+  };
+  const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const token = `${encoded}.${sign(encoded)}`;
   res.setHeader('Set-Cookie', `session=${token}; HttpOnly; Path=/; Max-Age=2592000; SameSite=Lax`);
 }
 
@@ -263,19 +282,17 @@ route('POST', '/api/signup', async (req, res) => {
   const exists = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
   if (exists) return send(res, 409, { error: 'An account with this email already exists.' });
   const id = createUser(name.trim(), email.trim(), password, 'learner');
-  startSession(res, id);
+  startSession(res, { id, name: name.trim(), email: email.trim(), role: 'learner', designation: null });
   send(res, 200, { ok: true });
 });
 route('POST', '/api/login', async (req, res) => {
   const { email, password } = await readBody(req);
   const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email || '');
   if (!user || !verifyPassword(user, password || '')) return send(res, 401, { error: 'Incorrect email or password.' });
-  startSession(res, user.id);
+  startSession(res, user);
   send(res, 200, { ok: true });
 });
 route('POST', '/api/logout', async (req, res) => {
-  const token = getCookie(req, 'session');
-  if (token) db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
   res.setHeader('Set-Cookie', 'session=; HttpOnly; Path=/; Max-Age=0');
   send(res, 200, { ok: true });
 });

@@ -38,17 +38,29 @@ A `render.yaml` blueprint is included at the repo root — Render reads it autom
 
 No GitHub Actions or CI config needed — Render redeploys automatically on every push to `main` (`autoDeploy: true` in the blueprint).
 
+## Sessions are stateless signed cookies, not a DB table
+
+`startSession`/`currentUser` used to look sessions up in a `sessions` table. On Vercel, concurrent requests can land on different isolated function instances that don't share a filesystem — a session created on one instance is invisible to another, which shows up as random, intermittent "logged out" behavior even seconds after logging in (confirmed live: firing 6 parallel requests with one valid session cookie got 2 `"Please sign in."` responses back). Sessions are now a signed cookie carrying the user snapshot (id/name/email/role/designation + expiry), verified with an HMAC — no DB lookup needed to answer "who is this", so it works identically no matter which instance handles the request.
+
+**Set `SESSION_SECRET` in production.** Without it, the cookie is signed with a fixed fallback string that's sitting in this public GitHub repo — anyone could forge a valid session for any user id. Set it once in your host's environment variables to any long random string; every instance needs the *same* value since they all have to verify each other's cookies.
+
+One tradeoff worth knowing: since the cookie is a snapshot taken at login, a role/designation change made by an admin via Users & Pricing won't be visible to that user until they log out and back in.
+
+This does **not** fix data consistency for custom accounts on Vercel — only login/identity. A user who signs up, or whose purchases/progress are written on one instance, still won't see that data from a request that lands on a different instance, because the `users`/`enrollments`/etc. tables are still per-instance `/tmp` state. The two seeded accounts (`admin@platform.ai`, `teacher@platform.ai`) are the only logins guaranteed to exist on every instance, since `seed()` recreates them identically whenever an instance boots with an empty DB.
+
 ## Before any public deploy (required)
 
-1. **Admin credentials** — handled above via `ADMIN_EMAIL`/`ADMIN_PASSWORD` env vars (falls back to the insecure `admin@platform.ai` / `admin123` seed defaults if unset — never leave those on a public URL).
-2. **Payments are simulated.** `POST /api/module/:id/purchase` accepts any card-shaped input and grants access. On a public URL, either wire Stripe Checkout (swap the simulated section; put enrollment insert in the webhook) or set all module prices to 0 / invite-only while testing.
-3. Serve over HTTPS (Render does this automatically) and add `Secure` to the session cookie in `startSession()` in `server.js` once HTTPS-only.
-4. Optional: set `ANTHROPIC_API_KEY` to later enable the AI tutor (stub at `POST /api/tutor`).
+1. **Admin credentials** — handled via `ADMIN_EMAIL`/`ADMIN_PASSWORD` env vars (falls back to the insecure `admin@platform.ai` / `admin123` seed defaults if unset — never leave those on a public URL).
+2. **`SESSION_SECRET`** — see above. Required for any public deploy; without it session cookies are forgeable.
+3. **Payments are simulated.** `POST /api/module/:id/purchase` accepts any card-shaped input and grants access. On a public URL, either wire Stripe Checkout (swap the simulated section; put enrollment insert in the webhook) or set all module prices to 0 / invite-only while testing.
+4. Serve over HTTPS (Render and Vercel both do this automatically) and add `Secure` to the session cookie in `startSession()` in `server.js` once HTTPS-only.
+5. Optional: set `ANTHROPIC_API_KEY` to later enable the AI tutor (stub at `POST /api/tutor`).
 
 ## Environment
 
 - `PORT` — listen port (hosts set this automatically).
-- `DB_PATH` — full path to the SQLite file. Defaults to `platform.db` next to `server.js`; set this to a path on a mounted persistent disk in production (the Render blueprint sets `/data/platform.db`).
+- `DB_PATH` — full path to the SQLite file. Defaults to `platform.db` next to `server.js`; set this to a path on a mounted persistent disk in production (the Render blueprint sets `/data/platform.db`; on Vercel it auto-defaults to `/tmp/platform.db`).
+- `SESSION_SECRET` — HMAC key for signing session cookies. Required for any public deploy (see above); local dev/testing works fine without it.
 - `ADMIN_EMAIL` / `ADMIN_PASSWORD` — override the seeded admin account. Only read once, on first boot when the `users` table is empty.
 - `ANTHROPIC_API_KEY` — optional, AI tutor stub.
 

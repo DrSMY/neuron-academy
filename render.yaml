@@ -16,6 +16,8 @@ services:
         sync: false
       - key: ADMIN_PASSWORD
         sync: false
+      - key: SESSION_SECRET
+        generateValue: true
     disk:
       name: neuroseed-data
       mountPath: /data
