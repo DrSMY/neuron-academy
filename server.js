@@ -450,6 +450,29 @@ route('GET', '/api/review/queue', async (req, res, _p, user) => {
   send(res, 200, { cards: dueReviewCards(user.id) });
 }, { auth: true });
 
+route('GET', '/api/quiz-history', async (req, res, _p, user) => {
+  const ids = ownedModuleIds(user.id);
+  if (!ids.length) return send(res, 200, { history: [] });
+  const mods = db.prepare(`
+    SELECT m.id, m.title, m.pass_percent,
+      (SELECT COUNT(*) FROM quiz_questions WHERE module_id = m.id) AS bank_size,
+      (SELECT COUNT(*) FROM lessons WHERE module_id = m.id) AS lesson_count,
+      (SELECT COUNT(*) FROM assignments WHERE module_id = m.id) AS assignment_count
+    FROM modules m WHERE m.id IN (${ids.map(() => '?').join(',')})`).all(...ids);
+  const history = mods.filter((m) => m.bank_size > 0).map((m) => {
+    const attempts = db.prepare('SELECT score, passed, attempted_at FROM quiz_attempts WHERE user_id = ? AND module_id = ? ORDER BY attempted_at DESC').all(user.id, m.id);
+    return {
+      module_id: m.id, title: m.title, pass_percent: m.pass_percent,
+      attempts: attempts.length,
+      bestScore: attempts.length ? Math.max(...attempts.map((a) => a.score)) : null,
+      passed: attempts.some((a) => a.passed),
+      lastAttemptAt: attempts[0]?.attempted_at || null,
+      quiz_index: m.lesson_count + m.assignment_count,
+    };
+  }).sort((a, b) => (b.lastAttemptAt || '').localeCompare(a.lastAttemptAt || ''));
+  send(res, 200, { history });
+}, { auth: true });
+
 route('POST', '/api/review/:id', async (req, res, p, user) => {
   const { grade } = await readBody(req);
   if (!['again', 'hard', 'good', 'easy'].includes(grade)) return send(res, 400, { error: 'Invalid grade.' });

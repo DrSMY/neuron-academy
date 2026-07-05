@@ -38,12 +38,15 @@ Content is organised as **Subjects → Tracks → Modules → Lessons**:
 - Learners browse via **Explore** (subject cards) → subject page (each track drawn as its own neural path).
 - Admin manages the whole tree in **Catalog** (subjects & tracks CRUD; every module is assigned to a track). Subjects/tracks have their own publish toggles; a module is only visible when its module, track and subject are all published.
 
-## Learner navigation — what each page is for
+## Learner navigation — exactly 3 pillars
 
-- **Home**: dashboard — streak, XP/level, activity heatmap, badges, and a "continue where you left off" hero.
-- **Explore**: discovery only — browse subjects and tracks, see what's available, enroll in something new. Already-owned modules show their state but the page is oriented around finding and adding new material.
-- **My Learning**: your enrolled work, grouped into *Continue learning* (in progress), *Up next — locked* (owned but waiting on a prerequisite), and *Completed* (with certificates).
-- **Review**: recap and daily practice — leads with a "Continue: {module}" card pointing at your current lesson target, a *Recently completed* strip of past modules, then the spaced-repetition flashcard queue.
+There is no separate "Home" — the app has exactly three nav destinations, matching three distinct jobs:
+
+- **Explore**: discovery only. Browse subjects and tracks, see what's available, and **add** something new to your learning. Nothing here is about studying — it's about finding and enrolling.
+- **My Learning** (the landing page after sign-in): **choose a lesson and go through the modules**. Greets you and groups your enrolled work into *Continue learning* (in progress — the exact resume target links straight to its next lesson), *Up next — locked* (waiting on a prerequisite), and *Completed* (certificates one click away). Nothing about discovery lives here — only what you already own.
+- **Review**: streak, overall progress, quiz history, and other retrospective info. Stat cards (streak / level / enrolled / completed), the learning-activity heatmap, your badge collection, a **quiz history table** (best score, attempts, pass/fail, retake link per module), a recently-completed strip, and the daily spaced-repetition flashcard queue at the bottom.
+
+Old `#/home` links/bookmarks still resolve — they fall through to My Learning.
 
 ## Learner features
 

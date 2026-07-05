@@ -110,13 +110,12 @@ function shell(active, content) {
   return `
   <div class="app-frame">
     <aside class="sidenav">
-      <a class="brand" href="#/home"><span class="logo">${icon('logo')}</span><span class="brand-text">Neuron<br><em>Academy</em></span></a>
+      <a class="brand" href="#/learning"><span class="logo">${icon('logo')}</span><span class="brand-text">Neuron<br><em>Academy</em></span></a>
       <nav class="snav">
-        ${navItem('home', '#/home', 'home', 'Home')}
         ${navItem('catalog', '#/catalog', 'layers', 'Explore')}
         ${navItem('learning', '#/learning', 'book', 'My Learning')}
         ${navItem('review', '#/review', 'zap', 'Review', duePill)}
-        ${me.role === 'admin' ? navItem('admin', '/admin', 'sparkle', 'Admin Panel') : ''}
+        ${me.role === 'admin' || me.role === 'teacher' ? navItem('admin', '/admin', 'sparkle', me.role === 'admin' ? 'Admin Panel' : 'Teacher Panel') : ''}
       </nav>
       <div class="snav-spacer"></div>
       <div class="side-streak card ${meStats?.activeToday ? 'lit' : ''}">
@@ -139,9 +138,8 @@ function shell(active, content) {
     </div>
   </div>
   <nav class="bottomnav" aria-label="Primary">
-    <a class="${active === 'home' ? 'active' : ''}" href="#/home">${icon('home')}<span>Home</span></a>
     <a class="${active === 'catalog' ? 'active' : ''}" href="#/catalog">${icon('layers')}<span>Explore</span></a>
-    <a class="${active === 'learning' ? 'active' : ''}" href="#/learning">${icon('book')}<span>Learning</span></a>
+    <a class="${active === 'learning' ? 'active' : ''}" href="#/learning">${icon('book')}<span>My Learning</span></a>
     <a class="${active === 'review' ? 'active' : ''}" href="#/review">${icon('zap')}<span>Review</span>${meStats?.dueReviews ? `<i class="dot"></i>` : ''}</a>
   </nav>`;
 }
@@ -231,7 +229,7 @@ function renderAuth(mode = 'login') {
 }
 
 // ---------- catalog ----------
-function moduleCard(m, i) {
+function moduleCard(m, i, resumeIdx) {
   const stateBadge = {
     completed: `<span class="badge completed">${icon('check')} Completed</span>`,
     ready: `<span class="badge ready">${icon('play')} In progress</span>`,
@@ -242,10 +240,11 @@ function moduleCard(m, i) {
 
   const pct = m.lessonsTotal ? Math.round((m.lessonsDone / m.lessonsTotal) * 100) : 0;
   const discounted = m.price < m.base_price;
+  const continueHref = `#/module/${m.id}${resumeIdx !== undefined ? '/lesson/' + resumeIdx : ''}`;
 
   let action;
   if (m.completed) action = `<span style="display:flex;gap:8px"><a class="btn btn-ghost btn-sm" href="/api/certificate/${m.id}" title="Download certificate">${icon('award')} Certificate</a><a class="btn btn-ghost btn-sm" href="#/module/${m.id}">Review ${icon('arrowRight')}</a></span>`;
-  else if (m.owned && m.unlocked) action = `<a class="btn btn-primary btn-sm" href="#/module/${m.id}">${m.lessonsDone > 0 ? 'Continue' : 'Start'} ${icon('arrowRight')}</a>`;
+  else if (m.owned && m.unlocked) action = `<a class="btn btn-primary btn-sm" href="${continueHref}">${m.lessonsDone > 0 ? 'Continue' : 'Start'} ${icon('arrowRight')}</a>`;
   else if (m.owned) action = `<button class="btn btn-ghost btn-sm" disabled>${icon('lock')} Locked</button>`;
   else action = `<button class="btn btn-primary btn-sm" data-buy="${m.id}">${icon('cart')} Get module</button>`;
 
@@ -1104,28 +1103,32 @@ function drawQuiz(result = null) {
 // ---------- my learning ----------
 async function renderLearning() {
   app.innerHTML = shell('learning', `
-    <div class="page-head">
+    <div class="page-head" id="learn-head">
       <span class="eyebrow">Your enrolled work</span>
-      <h1>My Learning</h1>
-      <p>Everything you're enrolled in, grouped by what to do next. Looking for something new to add? That's what <a href="#/catalog">Explore</a> is for.</p>
+      <h1>Welcome back${me ? ', ' + esc(me.name.split(' ')[0]) : ''} <span class="wave">👋</span></h1>
+      <p>Choose a module below and go through it. Looking for something new to add? That's what <a href="#/catalog">Explore</a> is for.</p>
     </div>
     <div id="learn-sections"><div class="skeleton" style="min-height:300px"></div></div>`);
   bindShell();
   try {
-    const { modules } = await api('/api/catalog');
+    const [{ modules }, dash] = await Promise.all([api('/api/catalog'), api('/api/dashboard')]);
     const owned = modules.filter((m) => m.owned);
     const box = $('#learn-sections');
     if (!owned.length) {
       box.innerHTML = `<div class="card empty">${icon('book')}<h3>Nothing here yet</h3><p>Pick your first module from Explore and start your learning journey.</p><a class="btn btn-primary" href="#/catalog">Explore modules ${icon('arrowRight')}</a></div>`;
       return;
     }
+    const subtitle = dash.resume ? `Pick up right where you left off, or start something new below.`
+      : `Everything you're enrolled in is complete — head to Explore for more.`;
+    $('#learn-head p').innerHTML = `${subtitle} Looking for something new to add? That's what <a href="#/catalog">Explore</a> is for.`;
+
     const inProgress = owned.filter((m) => !m.completed && m.unlocked);
     const lockedUp = owned.filter((m) => !m.completed && !m.unlocked);
     const completed = owned.filter((m) => m.completed);
     const section = (title, sub, list) => !list.length ? '' : `
       <div class="section-row" style="margin-top:30px"><h3>${title}</h3></div>
       <p class="hint-text" style="margin:-8px 0 14px">${sub}</p>
-      <div class="grid">${list.map((m) => moduleCard(m, modules.indexOf(m))).join('')}</div>`;
+      <div class="grid">${list.map((m) => moduleCard(m, modules.indexOf(m), dash.resume && dash.resume.module_id === m.id ? dash.resume.lesson_idx : undefined)).join('')}</div>`;
     box.innerHTML = section('Continue learning', 'Pick up right where you left off.', inProgress)
       + section('Up next — locked', 'Finish the previous module in each track to unlock these.', lockedUp)
       + section('Completed', 'Great work — certificates are one click away.', completed);
@@ -1135,33 +1138,66 @@ async function renderLearning() {
   }
 }
 
-// ---------- review hub: current focus, recent completions, flashcards ----------
+// ---------- review hub: streak, progress, quiz history, flashcards ----------
 async function renderReview() {
   app.innerHTML = shell('review', '<div class="skeleton" style="min-height:340px"></div>');
   bindShell();
-  let cards, dash;
+  let cards, dash, quizHistory;
   try {
-    [cards, dash] = await Promise.all([
+    [cards, dash, quizHistory] = await Promise.all([
       api('/api/review/queue').then((r) => r.cards),
       api('/api/dashboard'),
+      api('/api/quiz-history').then((r) => r.history),
     ]);
   } catch (err) { if (err.status === 401) { me = null; render(); } else toast(err.message, 'error'); return; }
 
+  const overallPct = dash.stats.owned ? Math.round((dash.stats.completed / dash.stats.owned) * 100) : 0;
+
+  const quizStatusBadge = (h) => h.passed ? `<span class="badge completed">${icon('check')} Passed</span>`
+    : h.attempts ? '<span class="badge locked">Not passed yet</span>'
+    : '<span class="badge draft">Not attempted</span>';
+
   const recap = `
     <div class="page-head" style="margin-bottom:22px">
-      <span class="eyebrow">Recap & practice</span>
+      <span class="eyebrow">Progress & practice</span>
       <h1>Review</h1>
-      <p>Your current focus, recently finished work, and a daily flashcard review to keep it all fresh.</p>
+      <p>Your streak, overall progress, quiz history, and a daily flashcard review — everything about how you're doing, in one place.</p>
     </div>
-    ${dash.resume ? `
-    <a class="card cl-card" href="#/module/${dash.resume.module_id}/lesson/${dash.resume.lesson_idx}" style="margin-bottom:28px">
-      ${thumbHTML(0)}
-      <div class="cl-info">
-        <strong>Continue: ${esc(dash.resume.module_title)}</strong>
-        <span class="cl-meta">Next up: ${esc(dash.resume.lesson_label)} · ${dash.resume.lessonsDone}/${dash.resume.lessonsTotal} lessons</span>
-      </div>
-      <span class="btn btn-primary btn-sm cl-btn">Resume ${icon('arrowRight')}</span>
-    </a>` : ''}
+    <div class="stat-grid">
+      <div class="card stat-card"><div class="label">${icon('flame')} Streak</div><div class="value">${dash.streak} day${dash.streak === 1 ? '' : 's'}</div></div>
+      <div class="card stat-card"><div class="label">${icon('zap')} Level</div><div class="value">${dash.level}<span style="font-size:14px;color:var(--fg-faint)"> · ${dash.xp} XP</span></div></div>
+      <div class="card stat-card"><div class="label">${icon('layers')} Enrolled</div><div class="value">${dash.stats.owned}</div></div>
+      <div class="card stat-card"><div class="label">${icon('trophy')} Completed</div><div class="value">${dash.stats.completed}<span style="font-size:14px;color:var(--fg-faint)"> · ${overallPct}%</span></div></div>
+    </div>
+
+    <div class="section-row"><h3>Learning activity</h3></div>
+    <div class="card heat-card" style="margin-bottom:28px">${heatmapHTML(dash.heatmap)}</div>
+
+    <div class="section-row"><h3>Badges</h3></div>
+    <div class="badge-grid" style="margin-bottom:28px">
+      ${dash.badges.map((b) => `
+      <div class="card badge-card ${b.earned ? 'earned' : ''}" title="${esc(b.desc)}">
+        <span class="badge-icon">${icon(b.icon)}</span><strong>${esc(b.name)}</strong><span>${esc(b.desc)}</span>
+      </div>`).join('')}
+    </div>
+
+    <div class="section-row"><h3>Quiz history</h3></div>
+    ${quizHistory.length ? `
+    <div class="card table-card" style="margin-bottom:28px">
+      <table class="data">
+        <thead><tr><th>Module</th><th>Best score</th><th>Attempts</th><th>Status</th><th></th></tr></thead>
+        <tbody>${quizHistory.map((h) => `
+          <tr>
+            <td class="t-strong">${esc(h.title)}</td>
+            <td class="num">${h.bestScore === null ? '—' : h.bestScore + '%'}</td>
+            <td class="num">${h.attempts}</td>
+            <td>${quizStatusBadge(h)}</td>
+            <td style="text-align:right"><a class="btn btn-ghost btn-sm" href="#/module/${h.module_id}/lesson/${h.quiz_index}">${h.attempts ? 'Retake' : 'Take quiz'} ${icon('arrowRight')}</a></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>` : `<div class="card empty" style="padding:30px;margin-bottom:28px">${icon('sparkle')}<h3>No quizzes yet</h3><p>Quizzes appear here once you enroll in a module that has one.</p></div>`}
+
     ${dash.recentCompletions.length ? `
     <div class="section-row"><h3>Recently completed</h3></div>
     <div class="recent-chip-row" style="margin-bottom:28px">
@@ -1219,24 +1255,6 @@ async function renderReview() {
   draw();
 }
 
-// ---------- home dashboard ----------
-function ringSVG(pct, size = 148) {
-  const r = 62;
-  const c = 2 * Math.PI * r;
-  return `
-  <svg class="ring" width="${size}" height="${size}" viewBox="0 0 148 148" role="img" aria-label="Module progress ${pct}%">
-    <defs><linearGradient id="ring-grad" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="var(--accent-bright)"/><stop offset="100%" stop-color="var(--accent-2)"/>
-    </linearGradient></defs>
-    <circle cx="74" cy="74" r="${r}" fill="none" stroke="rgba(255,255,255,0.07)" stroke-width="10"/>
-    <circle class="ring-fill" cx="74" cy="74" r="${r}" fill="none" stroke="url(#ring-grad)" stroke-width="10"
-      stroke-linecap="round" stroke-dasharray="${c}" stroke-dashoffset="${c}" data-target="${c * (1 - pct / 100)}"
-      transform="rotate(-90 74 74)"/>
-    <text x="74" y="70" text-anchor="middle" class="ring-num">${pct}%</text>
-    <text x="74" y="92" text-anchor="middle" class="ring-label">complete</text>
-  </svg>`;
-}
-
 function heatmapHTML(heat) {
   const byDay = new Map(heat.map((h) => [h.day, h.n]));
   const cells = [];
@@ -1272,116 +1290,6 @@ const THUMB_ART = [
 function thumbHTML(i, size = '') {
   const [c1, c2, ic] = THUMB_ART[i % THUMB_ART.length];
   return `<span class="cl-thumb ${size}" style="background:linear-gradient(135deg,${c1},${c2})" aria-hidden="true">${icon(ic)}</span>`;
-}
-
-async function renderHome() {
-  app.innerHTML = shell('home', '<div class="skeleton" style="min-height:400px"></div>');
-  bindShell();
-  try {
-    const [d, cat] = await Promise.all([api('/api/dashboard'), api('/api/catalog')]);
-    const modules = cat.modules;
-    const inProgress = modules.filter((m) => m.owned && !m.completed);
-    const recommended = modules.filter((m) => !m.owned).slice(0, 4);
-    const earned = d.badges.filter((b) => b.earned);
-    const overallPct = d.stats.owned ? Math.round((d.stats.completed / d.stats.owned) * 100) : 0;
-
-    const clCard = (m) => {
-      const i = modules.indexOf(m);
-      const pct = m.lessonsTotal ? Math.round((m.lessonsDone / m.lessonsTotal) * 100) : 0;
-      const resumeHere = d.resume && d.resume.module_id === m.id;
-      const href = resumeHere ? `#/module/${m.id}/lesson/${d.resume.lesson_idx}` : `#/module/${m.id}`;
-      return `
-      <a class="card cl-card" href="${href}">
-        ${thumbHTML(i)}
-        <div class="cl-info">
-          <strong>${esc(m.title)}</strong>
-          <span class="cl-meta">${pct}% complete · ${m.lessonsDone} of ${m.lessonsTotal} lessons</span>
-          <div class="progress-track" style="margin:8px 0 0"><div class="progress-fill" style="width:${pct}%"></div></div>
-        </div>
-        <span class="btn btn-primary btn-sm cl-btn">${m.unlocked ? 'Continue' : icon('lock')}</span>
-      </a>`;
-    };
-
-    const recCard = (m) => `
-      <div class="card rec-card">
-        ${thumbHTML(modules.indexOf(m), 'sm')}
-        <strong>${esc(m.title)}</strong>
-        <span class="cl-meta">${m.lessonsTotal} lessons · ${esc(m.level)}</span>
-        <div class="rec-foot"><span class="price" style="font-size:16px">${money(m.price)}</span>
-        <button class="btn btn-ghost btn-sm" data-buy="${m.id}">View</button></div>
-      </div>`;
-
-    $('.container').innerHTML = `
-      <div class="home-layout">
-        <div class="home-main">
-          <div class="page-head" style="margin-bottom:22px">
-            <h1 style="font-size:28px">Welcome back, ${esc(me.name.split(' ')[0])} <span class="wave">👋</span></h1>
-            <p>${d.resume ? 'Pick up right where you left off.' : d.stats.completed > 0 ? 'Everything you own is complete — grab the next module.' : 'Your learning path is ready when you are.'}</p>
-          </div>
-          <div class="section-row"><h3>Continue learning</h3><a class="view-all" href="#/learning">View all ${icon('arrowRight')}</a></div>
-          ${inProgress.length ? `<div class="cl-grid">${inProgress.slice(0, 2).map(clCard).join('')}</div>` : `
-          <div class="card empty" style="padding:36px">${icon('sparkle')}<h3>Nothing in progress</h3>
-          <p>${d.stats.completed > 0 ? 'Unlock the next module on your path.' : 'Start with the first module of the neural path.'}</p>
-          <a class="btn btn-primary" href="#/catalog">Browse the path ${icon('arrowRight')}</a></div>`}
-          ${recommended.length ? `
-          <div class="section-row" style="margin-top:28px"><h3>Recommended for you</h3><a class="view-all" href="#/catalog">View all ${icon('arrowRight')}</a></div>
-          <div class="rec-grid">${recommended.map(recCard).join('')}</div>` : ''}
-          <section class="card heat-card" style="margin-top:28px">
-            <h3 style="font-size:16px;margin-bottom:14px">Learning activity</h3>
-            ${heatmapHTML(d.heatmap)}
-          </section>
-        </div>
-        <aside class="progress-panel">
-          <div class="card panel-card">
-            <h3>Your progress</h3>
-            ${ringSVG(overallPct, 138)}
-            <div class="tile-row">
-              <div class="tile"><strong>${d.stats.owned}</strong><span>Enrolled</span></div>
-              <div class="tile"><strong>${d.stats.completed}</strong><span>Completed</span></div>
-              <div class="tile"><strong>${d.xp}</strong><span>XP</span></div>
-            </div>
-            <div class="level-line">
-              <span>${icon('zap')} Level ${d.level}</span><span>${d.levelCeil - d.xp} XP to ${d.level + 1}</span>
-            </div>
-            <div class="progress-track" style="margin-top:6px"><div class="progress-fill" style="width:${d.levelProgress}%"></div></div>
-          </div>
-          <div class="card panel-card">
-            <h3>Recent achievements</h3>
-            ${earned.length ? earned.slice(-3).reverse().map((b) => `
-            <div class="ach-row"><span class="badge-icon">${icon(b.icon)}</span><div><strong>${esc(b.name)}</strong><span>${esc(b.desc)}</span></div></div>`).join('')
-            : '<p class="hint-text" style="margin:0">Complete a lesson to earn your first badge.</p>'}
-            <a class="view-all" href="#/badges" id="all-badges" style="margin-top:10px">All badges ${icon('arrowRight')}</a>
-            <div class="badge-grid mini" id="badge-strip" hidden>
-              ${d.badges.map((b) => `
-              <div class="card badge-card ${b.earned ? 'earned' : ''}" title="${esc(b.desc)}">
-                <span class="badge-icon">${icon(b.icon)}</span><strong>${esc(b.name)}</strong>
-              </div>`).join('')}
-            </div>
-          </div>
-        </aside>
-      </div>`;
-
-    $('#all-badges').onclick = (e) => {
-      e.preventDefault();
-      const strip = $('#badge-strip');
-      strip.hidden = !strip.hidden;
-    };
-    $('.container').querySelectorAll('[data-buy]').forEach((b) => {
-      b.onclick = () => openCheckout(modules.find((m) => m.id === Number(b.dataset.buy)));
-    });
-
-    // animate the ring in
-    requestAnimationFrame(() => {
-      const fill = $('.ring-fill');
-      if (fill) {
-        if (REDUCED_MOTION) fill.style.strokeDashoffset = fill.dataset.target;
-        else setTimeout(() => { fill.style.strokeDashoffset = fill.dataset.target; }, 60);
-      }
-    });
-  } catch (err) {
-    if (err.status === 401) { me = null; render(); return; }
-    toast(err.message, 'error');
-  }
 }
 
 // ---------- celebrations ----------
@@ -1450,10 +1358,9 @@ const palette = {
   el: null, items: [], filtered: [], sel: 0,
   staticItems() {
     const acts = [
-      { type: 'action', title: 'Go to Home', hint: 'Dashboard', run: () => { location.hash = '#/home'; } },
-      { type: 'action', title: 'Go to Modules', hint: 'Neural path', run: () => { location.hash = '#/catalog'; } },
-      { type: 'action', title: 'Go to My Learning', hint: 'Progress', run: () => { location.hash = '#/learning'; } },
-      { type: 'action', title: 'Start daily review', hint: 'Flashcards', run: () => { location.hash = '#/review'; } },
+      { type: 'action', title: 'Go to Explore', hint: 'Discover & enroll', run: () => { location.hash = '#/catalog'; } },
+      { type: 'action', title: 'Go to My Learning', hint: 'Choose & study', run: () => { location.hash = '#/learning'; } },
+      { type: 'action', title: 'Go to Review', hint: 'Streak, progress & quizzes', run: () => { location.hash = '#/review'; } },
       { type: 'action', title: 'Sign out', hint: 'Account', run: async () => { await api('/api/logout', { method: 'POST' }); me = null; render(); } },
     ];
     if (me?.role === 'admin' || me?.role === 'teacher') acts.push({ type: 'action', title: 'Open admin panel', hint: me.role === 'admin' ? 'Admin' : 'Teacher', run: () => { location.href = '/admin'; } });
@@ -1536,15 +1443,14 @@ document.addEventListener('keydown', (e) => {
 // ---------- router ----------
 function render() {
   if (!me) { renderAuth(); return; }
-  const hash = location.hash || '#/home';
+  const hash = location.hash || '#/learning';
   const mModule = hash.match(/^#\/module\/(\d+)(?:\/lesson\/(\d+))?/);
   if (mModule) { drawQuiz._answers = {}; renderModule(Number(mModule[1]), mModule[2] ? Number(mModule[2]) : 0); return; }
   const mSubject = hash.match(/^#\/subject\/(\d+)/);
   if (mSubject) { renderSubject(Number(mSubject[1])); return; }
-  if (hash.startsWith('#/learning')) { renderLearning(); return; }
   if (hash.startsWith('#/catalog')) { renderCatalog(); return; }
   if (hash.startsWith('#/review')) { renderReview(); return; }
-  renderHome();
+  renderLearning(); // #/learning and unrecognized hashes (including legacy #/home)
 }
 window.addEventListener('hashchange', render);
 
