@@ -3,7 +3,10 @@ const { DatabaseSync } = require('node:sqlite');
 const crypto = require('node:crypto');
 const path = require('node:path');
 
-const db = new DatabaseSync(process.env.DB_PATH || path.join(__dirname, 'platform.db'));
+// Vercel's serverless filesystem is read-only except /tmp, and /tmp is wiped
+// between cold starts — so on Vercel the DB resets periodically by design.
+// Set DB_PATH explicitly to point at a real persistent disk elsewhere (e.g. Render).
+const db = new DatabaseSync(process.env.DB_PATH || (process.env.VERCEL ? '/tmp/platform.db' : path.join(__dirname, 'platform.db')));
 db.exec('PRAGMA journal_mode = WAL');
 db.exec('PRAGMA foreign_keys = ON');
 

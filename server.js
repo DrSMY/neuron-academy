@@ -1264,7 +1264,7 @@ route('PUT', '/api/admin/users/:id/modules/:mid', async (req, res, p) => {
 }, { admin: true });
 
 // ---------- server ----------
-const server = http.createServer(async (req, res) => {
+async function handleRequest(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const pathname = url.pathname;
 
@@ -1299,9 +1299,15 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': MIME[path.extname(full)] || 'application/octet-stream' });
     res.end(data);
   });
-});
+}
 
-server.listen(PORT, () => {
-  console.log(`NeuroSeed running at http://localhost:${PORT}`);
-  console.log(`Admin panel:            http://localhost:${PORT}/admin`);
-});
+// Run a real listening server for local dev / Render / any long-running host.
+// On Vercel (or any @vercel/node-style import), this file is required as a
+// module instead — module.exports below is the serverless entry point.
+if (require.main === module) {
+  http.createServer(handleRequest).listen(PORT, () => {
+    console.log(`NeuroSeed running at http://localhost:${PORT}`);
+    console.log(`Admin panel:            http://localhost:${PORT}/admin`);
+  });
+}
+module.exports = handleRequest;
