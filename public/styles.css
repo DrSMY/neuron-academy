@@ -104,6 +104,12 @@ html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* the brand logo is a pair of theme-specific imgs — exactly one of the pair
+   shows, everywhere the pair is used (brand, thumbnails, watermark, …) */
+img.for-dark, img.for-light { display: none; }
+html[data-theme="dark"] img.for-dark { display: block; }
+html[data-theme="light"] img.for-light { display: block; }
+
 html { scroll-behavior: smooth; }
 
 body {
@@ -131,7 +137,8 @@ h1, h2, h3, h4 { font-family: var(--font-heading); font-weight: 600; line-height
 .ambient .blob-3 { width: 380px; height: 380px; background: var(--tertiary); bottom: -140px; left: 30%; opacity: 0.07; animation-delay: -16s; animation-duration: 36s; }
 
 .bg-tree {
-  /* source art is already a half-tree cropped to its right edge, so no extra clipping transform is needed */
+  /* source art is already a half-tree cropped to its right edge; z-index -1
+     keeps it behind all content, so size is a taste choice, not a safety one */
   position: fixed; top: 50%; right: 0; transform: translateY(-50%);
   width: min(40vw, 560px); height: auto; z-index: -1; pointer-events: none;
   opacity: var(--bgtree-opacity); transition: opacity 400ms var(--ease);
@@ -347,9 +354,12 @@ html[data-theme="light"] .brand .logo img.for-light { display: block; }
   width: 86px; height: 72px; border-radius: 12px; flex: none; display: grid; place-items: center;
   box-shadow: inset 0 0 30px rgba(255, 255, 255, 0.12), 0 6px 16px -6px rgba(0, 0, 0, 0.5);
   transition: transform 350ms var(--ease);
+  overflow: hidden; /* nothing inside a thumbnail may ever spill over the cards */
 }
 .cl-thumb svg { width: 30px; height: 30px; stroke: #fff; fill: none; }
 .cl-thumb svg rect { display: none; }
+/* the logo "icon" is a pair of theme imgs, not an svg — constrain it the same way */
+.cl-thumb img { width: 34px; height: 34px; object-fit: contain; }
 .cl-thumb.sm { width: 100%; height: 84px; }
 .cl-meta { font-size: 12.5px; color: var(--fg-faint); }
 
