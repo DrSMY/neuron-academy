@@ -400,6 +400,7 @@ html[data-theme="light"] .brand .logo img.for-light { display: block; }
 .price { font-family: var(--font-heading); font-weight: 700; font-size: 20px; }
 .price .free { color: var(--success); }
 .price .was { font-size: 13px; font-weight: 400; color: var(--fg-faint); text-decoration: line-through; margin-left: 7px; }
+.dirham-sym { width: 0.72em; height: 0.72em; display: inline-block; vertical-align: -0.05em; margin-right: 0.05em; }
 
 .badge {
   display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px;
