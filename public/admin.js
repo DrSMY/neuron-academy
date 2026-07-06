@@ -28,6 +28,16 @@ ICONS.inbox = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-line
 ICONS.file = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2.5h8L19 7.5V20a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 20V4A1.5 1.5 0 0 1 6.5 2.5z"/><path d="M14 2.5v5h5"/></svg>';
 ICONS.signature = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17c2-4 3.5-8 5-8s1 5 2.5 5 2-3 3.5-3 1.5 4 3 4 2-2 4-2"/><path d="M4 21h16"/></svg>';
 ICONS.moon = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z"/></svg>';
+// lesson-icon set (kept identical to app.js so learners see the same glyph)
+ICONS.book = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2zm0 0a2 2 0 0 0 2 2h13"/></svg>';
+ICONS.play = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l14 8-14 8z"/></svg>';
+ICONS.code = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 6-6 6 6 6M16 6l6 6-6 6"/></svg>';
+ICONS.zap = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>';
+ICONS.sparkle = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4z"/></svg>';
+ICONS.note = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v12l-4 4H4z"/><path d="M16 20v-4h4M8 9h8M8 13h5"/></svg>';
+ICONS.bot = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V4m0 0h3M9 19v2m6-2v2"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/></svg>';
+ICONS.lock = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
+const LESSON_ICON_OPTIONS = ['book', 'play', 'code', 'zap', 'sparkle', 'trophy', 'note', 'bot'];
 function icon(n) { return ICONS[n] || ''; }
 
 function currentTheme() { return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'; }
@@ -95,6 +105,9 @@ let view = 'overview';
 
 // ---------- shell ----------
 function isAdmin() { return me.role === 'admin'; }
+function canViewAnalytics() { return isAdmin() || !!me.can_view_analytics; }
+function ownsContentEverywhere() { return isAdmin() || me.content_scope !== 'own'; }
+function canManageMod(mod) { return ownsContentEverywhere() || mod.created_by === me.id; }
 
 function shell(content) {
   const badge = me.role === 'admin' ? 'Admin' : 'Teacher';
@@ -105,9 +118,9 @@ function shell(content) {
     <span class="spacer"></span>
     <div class="user-chip">
       <button class="icon-btn theme-btn" id="theme-btn" aria-label="Toggle theme">${icon(currentTheme() === 'light' ? 'moon' : 'sun')}</button>
-      <a class="nav-link" href="/">Learner view</a>
+      <a class="nav-link admin-learner-link" href="/">Learner view</a>
       <span class="avatar" aria-hidden="true">${esc(me.name.charAt(0).toUpperCase())}</span>
-      <span style="font-size:13.5px">${esc(me.name)}${byline}</span>
+      <span class="user-name" style="font-size:13.5px">${esc(me.name)}${byline}</span>
       <button class="btn btn-ghost btn-sm" id="logout-btn">Sign out</button>
     </div>
   </header>
@@ -117,7 +130,7 @@ function shell(content) {
       <button class="side-link ${view === 'modules' || view === 'editor' ? 'active' : ''}" data-view="modules">${icon('layers')} Modules</button>
       ${isAdmin() ? `<button class="side-link ${view === 'users' || view === 'userDetail' ? 'active' : ''}" data-view="users">${icon('users')} Users & Pricing</button>` : ''}
       <button class="side-link ${view === 'submissions' ? 'active' : ''}" data-view="submissions">${icon('inbox')} Submissions</button>
-      ${isAdmin() ? `<button class="side-link ${view === 'analytics' ? 'active' : ''}" data-view="analytics">${icon('chart')} Analytics</button>` : ''}
+      ${canViewAnalytics() ? `<button class="side-link ${view === 'analytics' ? 'active' : ''}" data-view="analytics">${icon('chart')} Analytics</button>` : ''}
     </aside>
     <main class="admin-main">${content}</main>
   </div>`;
@@ -249,20 +262,23 @@ async function renderModules() {
     <div class="section-head"><h2>Modules</h2></div>
     <div class="card table-card">
       <table class="data">
-        <thead><tr><th>#</th><th>Module</th><th>Track</th><th>Content</th><th>Base price</th><th>Pass %</th><th>Enrolled</th><th>Status</th><th></th></tr></thead>
+        <thead><tr><th>#</th><th>Module</th><th>Track</th><th>Content</th><th>Owner</th><th>Base price</th><th>Pass %</th><th>Enrolled</th><th>Status</th><th></th></tr></thead>
         <tbody>${modules.map((m) => `
           <tr>
             <td class="num">${m.position}</td>
             <td class="t-strong">${esc(m.title)}</td>
             <td>${m.track_title ? `${esc(m.subject_title)} › ${esc(m.track_title)}` : '<span class="badge draft">Unassigned</span>'}</td>
             <td>${m.lesson_count} lessons · ${m.question_count} Qs</td>
+            <td class="drag-hint">${m.owner_name ? esc(m.owner_name) : '—'}</td>
             <td class="num">${money(m.base_price)}</td>
             <td class="num">${m.pass_percent}%</td>
             <td class="num">${m.enrollment_count}</td>
             <td>${m.published ? `<span class="badge completed">${icon('check')} Live</span>` : '<span class="badge draft">Draft</span>'}</td>
             <td style="text-align:right;white-space:nowrap">
+              ${canManageMod(m) ? `
               <button class="btn btn-ghost btn-sm" data-edit="${m.id}">${icon('edit')} Edit</button>
               <button class="btn btn-danger btn-sm" data-del="${m.id}" aria-label="Delete ${esc(m.title)}">${icon('trash')}</button>
+              ` : `<span class="drag-hint" title="Only ${esc(m.owner_name || 'its creator')} can edit this module">${icon('lock')} Restricted</span>`}
             </td>
           </tr>`).join('')}
         </tbody>
@@ -302,9 +318,11 @@ async function renderModules() {
   document.querySelectorAll('[data-edit]').forEach((b) => { b.onclick = () => { view = 'editor'; renderEditor(Number(b.dataset.edit)); }; });
   document.querySelectorAll('[data-del]').forEach((b) => {
     b.onclick = () => confirmDialog('Delete module?', 'This permanently removes the module, its lessons, quiz and all enrollment records.', async () => {
-      await api(`/api/admin/modules/${b.dataset.del}`, { method: 'DELETE' });
-      toast('Module deleted.');
-      renderModules();
+      try {
+        await api(`/api/admin/modules/${b.dataset.del}`, { method: 'DELETE' });
+        toast('Module deleted.');
+        renderModules();
+      } catch (err) { toast(err.message, 'error'); }
     });
   });
 }
@@ -402,7 +420,7 @@ async function renderEditor(moduleId) {
       ${lessons.length ? lessons.map((l) => `
         <div class="card editor-block">
           <div class="block-head">
-            <h4><span style="color:var(--fg-faint);margin-right:8px">${l.position}.</span>${esc(l.title)}</h4>
+            <h4>${l.icon ? `<span style="display:inline-flex;width:16px;height:16px;vertical-align:-3px;margin-right:6px;color:var(--accent-bright)">${icon(l.icon)}</span>` : ''}<span style="color:var(--fg-faint);margin-right:8px">${l.position}.</span>${esc(l.title)}</h4>
             <div class="actions">
               <button class="btn btn-ghost btn-sm" data-edit-lesson="${l.id}">${icon('edit')} Edit</button>
               <button class="btn btn-danger btn-sm" data-del-lesson="${l.id}" aria-label="Delete lesson">${icon('trash')}</button>
@@ -469,9 +487,11 @@ async function renderEditor(moduleId) {
   });
   document.querySelectorAll('[data-del-lesson]').forEach((b) => {
     b.onclick = () => confirmDialog('Delete lesson?', 'Learner progress on this lesson will also be removed.', async () => {
-      await api(`/api/admin/lessons/${b.dataset.delLesson}`, { method: 'DELETE' });
-      toast('Lesson deleted.');
-      renderEditor(moduleId);
+      try {
+        await api(`/api/admin/lessons/${b.dataset.delLesson}`, { method: 'DELETE' });
+        toast('Lesson deleted.');
+        renderEditor(moduleId);
+      } catch (err) { toast(err.message, 'error'); }
     });
   });
   $('#edit-quiz').onclick = () => quizEditor(moduleId, mod, questions);
@@ -484,9 +504,11 @@ async function renderEditor(moduleId) {
   });
   document.querySelectorAll('[data-del-asg]').forEach((b) => {
     b.onclick = () => confirmDialog('Delete assignment?', 'All learner submissions for it are removed too.', async () => {
-      await api(`/api/admin/assignments/${b.dataset.delAsg}`, { method: 'DELETE' });
-      toast('Assignment deleted.');
-      renderEditor(moduleId);
+      try {
+        await api(`/api/admin/assignments/${b.dataset.delAsg}`, { method: 'DELETE' });
+        toast('Assignment deleted.');
+        renderEditor(moduleId);
+      } catch (err) { toast(err.message, 'error'); }
     });
   });
   $('#add-card').onclick = async () => {
@@ -561,6 +583,7 @@ function blockEditorHTML(b, i) {
 function lessonForm(moduleId, lesson) {
   let title = lesson?.title || '';
   let position = lesson?.position;
+  let lessonIcon = lesson?.icon || '';
   let blocks = (lesson?.blocks || []).map((b) => JSON.parse(JSON.stringify(b)));
   if (!lesson) blocks = [{ type: 'text', html: '' }];
 
@@ -589,6 +612,13 @@ function lessonForm(moduleId, lesson) {
         <div class="field"><label>Lesson title <span class="req">*</span></label><input id="lesson-title-input" value="${esc(title)}" required></div>
         ${lesson ? `<div class="field"><label>Position</label><input id="lesson-pos-input" type="number" min="1" value="${position}"></div>` : ''}
       </div>
+      <div class="field">
+        <label>Icon <span style="font-weight:400;color:var(--fg-faint)">— shown in the learner's lesson list instead of the number</span></label>
+        <div class="add-block-row">
+          <button type="button" class="btn btn-sm ${!lessonIcon ? 'btn-primary' : 'btn-ghost'}" data-licon="">None</button>
+          ${LESSON_ICON_OPTIONS.map((k) => `<button type="button" class="icon-btn" data-licon="${k}" aria-label="${k}" style="${lessonIcon === k ? 'border-color:var(--accent-bright);color:var(--accent-bright);background:rgba(214,179,106,0.14)' : ''}">${icon(k)}</button>`).join('')}
+        </div>
+      </div>
       <div id="blocks-list">${blocks.map(blockEditorHTML).join('')}</div>
       <div class="field" style="margin-top:14px">
         <label>Add block</label>
@@ -598,6 +628,9 @@ function lessonForm(moduleId, lesson) {
       </div>
       <button class="btn btn-primary" style="width:100%;margin-top:8px" id="save-lesson">${lesson ? 'Save lesson' : 'Add lesson'}</button>`, true);
 
+    modalEl.querySelectorAll('[data-licon]').forEach((btn) => {
+      btn.onclick = () => { syncFromDOM(); lessonIcon = btn.dataset.licon; draw(); };
+    });
     modalEl.querySelectorAll('[data-badd]').forEach((btn) => {
       btn.onclick = () => {
         syncFromDOM();
@@ -627,7 +660,7 @@ function lessonForm(moduleId, lesson) {
     $('#save-lesson').onclick = async () => {
       syncFromDOM();
       if (!title.trim()) { toast('The lesson needs a title.', 'error'); return; }
-      const body = { title: title.trim(), blocks, position: lesson ? position : undefined };
+      const body = { title: title.trim(), blocks, position: lesson ? position : undefined, icon: lessonIcon || null };
       try {
         if (lesson) await api(`/api/admin/lessons/${lesson.id}`, { method: 'PUT', body });
         else await api(`/api/admin/modules/${moduleId}/lessons`, { method: 'POST', body });
@@ -1049,13 +1082,31 @@ async function renderUsers() {
             <input name="designation" value="${esc(u.designation || '')}" placeholder="e.g. PhD, Physiotherapy — signs their lessons and assignments">
             <div class="hint">Shown to learners as "Written by ${esc(u.name)}, {designation}" on anything this person creates.</div>
           </div>
+          <div id="teacher-scope-fields" style="display:${u.role === 'teacher' ? 'block' : 'none'}">
+            <div class="field"><label>Content access</label>
+              <select name="content_scope">
+                <option value="all" ${u.content_scope !== 'own' ? 'selected' : ''}>All modules — same as admin's content reach</option>
+                <option value="own" ${u.content_scope === 'own' ? 'selected' : ''}>Only modules they created — can't touch other teachers' work</option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="check-row"><input type="checkbox" name="can_view_analytics" ${u.can_view_analytics ? 'checked' : ''}> Can view Analytics</label>
+              <div class="hint">Off by default — Analytics is hidden from teachers until you switch this on.</div>
+            </div>
+          </div>
           <button class="btn btn-primary" style="width:100%" type="submit">Save role</button>
         </form>`);
+      $('#role-form [name=role]').onchange = (e) => {
+        $('#teacher-scope-fields').style.display = e.target.value === 'teacher' ? 'block' : 'none';
+      };
       $('#role-form').onsubmit = async (e) => {
         e.preventDefault();
         const fd = new FormData(e.target);
         try {
-          await api(`/api/admin/users/${u.id}/role`, { method: 'PUT', body: { role: fd.get('role'), designation: fd.get('designation') } });
+          await api(`/api/admin/users/${u.id}/role`, { method: 'PUT', body: {
+            role: fd.get('role'), designation: fd.get('designation'),
+            content_scope: fd.get('content_scope'), can_view_analytics: fd.get('can_view_analytics') === 'on',
+          } });
           closeModal();
           toast('Role updated.');
           renderUsers();
@@ -1123,7 +1174,7 @@ async function renderUserDetail(userId) {
 function render() {
   const views = { overview: renderOverview, modules: renderModules, users: renderUsers, analytics: renderAnalytics, submissions: renderSubmissions };
   const fallback = isAdmin() ? renderOverview : renderModules;
-  const guarded = { overview: isAdmin, users: isAdmin, userDetail: isAdmin, analytics: isAdmin };
+  const guarded = { overview: isAdmin, users: isAdmin, userDetail: isAdmin, analytics: canViewAnalytics };
   if (guarded[view] && !guarded[view]()) view = 'modules';
   (views[view] || fallback)().catch((err) => {
     if (err.status === 401 || err.status === 403) location.href = '/';

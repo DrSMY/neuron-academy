@@ -467,7 +467,7 @@ function drawModule() {
 
   const navItems = mod.lessons.map((l, i) => `
     <button class="lesson-item ${l.done ? 'done' : ''} ${i === currentLessonIdx ? 'active' : ''}" data-idx="${i}">
-      <span class="dot">${l.done ? icon('check') : i + 1}</span>
+      <span class="dot">${l.done ? icon('check') : l.icon ? icon(l.icon) : i + 1}</span>
       <span>${esc(l.title)}</span>
     </button>`).join('') + (mod.assignments || []).map((a, i) => `
     <button class="lesson-item asg-item ${a.submission ? 'done' : ''} ${L + i === currentLessonIdx ? 'active' : ''}" data-idx="${L + i}">

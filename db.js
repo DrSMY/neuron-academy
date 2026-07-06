@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS users (
   pass_hash TEXT NOT NULL,
   salt TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'learner',
+  content_scope TEXT NOT NULL DEFAULT 'all',
+  can_view_analytics INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS subjects (
@@ -45,7 +47,8 @@ CREATE TABLE IF NOT EXISTS modules (
   position INTEGER NOT NULL DEFAULT 0,
   published INTEGER NOT NULL DEFAULT 0,
   pass_percent INTEGER NOT NULL DEFAULT 70,
-  quiz_draw INTEGER NOT NULL DEFAULT 0
+  quiz_draw INTEGER NOT NULL DEFAULT 0,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
 CREATE TABLE IF NOT EXISTS lessons (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,6 +57,7 @@ CREATE TABLE IF NOT EXISTS lessons (
   content_html TEXT NOT NULL DEFAULT '',
   video_url TEXT NOT NULL DEFAULT '',
   blocks_json TEXT,
+  icon TEXT,
   position INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS quiz_questions (
@@ -182,6 +186,10 @@ if (!hasColumn('lessons', 'created_by')) db.exec('ALTER TABLE lessons ADD COLUMN
 if (!hasColumn('assignments', 'created_by')) db.exec('ALTER TABLE assignments ADD COLUMN created_by INTEGER REFERENCES users(id) ON DELETE SET NULL');
 if (!hasColumn('flashcards', 'created_by')) db.exec('ALTER TABLE flashcards ADD COLUMN created_by INTEGER REFERENCES users(id) ON DELETE SET NULL');
 if (!hasColumn('quiz_questions', 'created_by')) db.exec('ALTER TABLE quiz_questions ADD COLUMN created_by INTEGER REFERENCES users(id) ON DELETE SET NULL');
+if (!hasColumn('modules', 'created_by')) db.exec('ALTER TABLE modules ADD COLUMN created_by INTEGER REFERENCES users(id) ON DELETE SET NULL');
+if (!hasColumn('lessons', 'icon')) db.exec('ALTER TABLE lessons ADD COLUMN icon TEXT');
+if (!hasColumn('users', 'content_scope')) db.exec("ALTER TABLE users ADD COLUMN content_scope TEXT NOT NULL DEFAULT 'all'");
+if (!hasColumn('users', 'can_view_analytics')) db.exec('ALTER TABLE users ADD COLUMN can_view_analytics INTEGER NOT NULL DEFAULT 0');
 
 function hashPassword(password, salt) {
   return crypto.scryptSync(password, salt, 64).toString('hex');
@@ -284,7 +292,7 @@ function seed() {
   createUser('Platform Admin', process.env.ADMIN_EMAIL || 'admin@platform.ai', process.env.ADMIN_PASSWORD || 'admin123', 'admin', 'Platform Administrator');
   const teacherId = createUser('Dr. Amara Okafor', 'teacher@platform.ai', 'teacher123', 'teacher', 'PhD, Machine Learning — Lead Instructor');
 
-  const addModule = db.prepare('INSERT INTO modules (title, description, level, duration_mins, base_price, position, published, pass_percent, quiz_draw) VALUES (?,?,?,?,?,?,?,?,?)');
+  const addModule = db.prepare('INSERT INTO modules (title, description, level, duration_mins, base_price, position, published, pass_percent, quiz_draw, created_by) VALUES (?,?,?,?,?,?,?,?,?,?)');
   const addLesson = db.prepare('INSERT INTO lessons (module_id, title, blocks_json, position, created_by) VALUES (?,?,?,?,?)');
   const addQ = db.prepare('INSERT INTO quiz_questions (module_id, question, options_json, correct_index, position, created_by) VALUES (?,?,?,?,?,?)');
 
@@ -298,7 +306,7 @@ function seed() {
   ];
 
   defs.forEach(([title, desc, level, mins, price, pos, pass, lessonTitles], di) => {
-    const mid = Number(addModule.run(title, desc, level, mins, price, pos, 1, pass, 3).lastInsertRowid);
+    const mid = Number(addModule.run(title, desc, level, mins, price, pos, 1, pass, 3, teacherId).lastInsertRowid);
     lessonTitles.forEach((lt, i) => addLesson.run(mid, lt, JSON.stringify(SEED_BLOCKS[lt]), i + 1, teacherId));
     (SEED_QUESTIONS[di + 1] || []).forEach(([q, opts, ci], i) => addQ.run(mid, q, JSON.stringify(opts), ci, i + 1, teacherId));
   });
