@@ -171,7 +171,38 @@ CREATE TABLE IF NOT EXISTS certificates (
   issued_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (user_id, module_id)
 );
+CREATE TABLE IF NOT EXISTS currencies (
+  code TEXT PRIMARY KEY,
+  symbol TEXT NOT NULL,
+  name TEXT NOT NULL,
+  rate_per_usd REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 `);
+
+// All prices are stored in USD; the active currency only controls how
+// they're displayed (converted + formatted) on the way out. Rates are
+// static and admin-editable rather than pulled from a live-rate API,
+// consistent with this project's zero-dependency approach.
+function seedCurrencies() {
+  const count = db.prepare('SELECT COUNT(*) AS c FROM currencies').get().c;
+  if (count > 0) return;
+  const ins = db.prepare('INSERT INTO currencies (code, symbol, name, rate_per_usd) VALUES (?,?,?,?)');
+  [
+    ['USD', '$', 'US Dollar', 1],
+    ['AED', 'د.إ', 'UAE Dirham', 3.6725],
+    ['SAR', 'ر.س', 'Saudi Riyal', 3.75],
+    ['EUR', '€', 'Euro', 0.92],
+    ['GBP', '£', 'British Pound', 0.79],
+    ['INR', '₹', 'Indian Rupee', 83],
+    ['PKR', '₨', 'Pakistani Rupee', 278],
+    ['EGP', 'ج.م', 'Egyptian Pound', 48.5],
+  ].forEach(([code, symbol, name, rate]) => ins.run(code, symbol, name, rate));
+  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('active_currency', 'USD')").run();
+}
 
 // ---- migrations for databases created before the block model ----
 function hasColumn(table, col) {
@@ -404,5 +435,6 @@ migrateLessons();
 backfillEvents();
 deriveFlashcards();
 migrateTaxonomy();
+seedCurrencies();
 
 module.exports = { db, createUser, verifyPassword };

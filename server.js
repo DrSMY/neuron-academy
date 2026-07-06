@@ -85,6 +85,18 @@ function effectivePrice(userId, mod) {
   if (s && s.custom_price !== null && s.custom_price !== undefined) return s.custom_price;
   return mod.base_price;
 }
+function getSetting(key, fallback) {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+  return row ? row.value : fallback;
+}
+function setSetting(key, value) {
+  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
+}
+function activeCurrency() {
+  const code = getSetting('active_currency', 'USD');
+  return db.prepare('SELECT * FROM currencies WHERE code = ?').get(code)
+    || { code: 'USD', symbol: '$', name: 'US Dollar', rate_per_usd: 1 };
+}
 function isOwned(userId, moduleId) {
   const e = db.prepare('SELECT 1 AS x FROM enrollments WHERE user_id = ? AND module_id = ?').get(userId, moduleId);
   if (e) return true;
@@ -315,6 +327,28 @@ route('POST', '/api/logout', async (req, res) => {
   res.setHeader('Set-Cookie', 'session=; HttpOnly; Path=/; Max-Age=0');
   send(res, 200, { ok: true });
 });
+route('GET', '/api/currency', async (req, res) => {
+  const all = db.prepare('SELECT code, symbol, name, rate_per_usd FROM currencies ORDER BY code = ? DESC, code').all('USD');
+  send(res, 200, { active: activeCurrency(), all });
+});
+
+route('PUT', '/api/admin/settings/currency', async (req, res) => {
+  const { code } = await readBody(req);
+  const currency = db.prepare('SELECT code FROM currencies WHERE code = ?').get(code);
+  if (!currency) return send(res, 400, { error: 'Unknown currency code.' });
+  setSetting('active_currency', code);
+  send(res, 200, { ok: true });
+}, { admin: true });
+
+route('PUT', '/api/admin/currencies/:code', async (req, res, p) => {
+  const b = await readBody(req);
+  const rate = Number(b.rate_per_usd);
+  if (Number.isNaN(rate) || rate <= 0) return send(res, 400, { error: 'Rate must be a positive number.' });
+  const r = db.prepare('UPDATE currencies SET rate_per_usd = ? WHERE code = ?').run(rate, p.code);
+  if (r.changes === 0) return send(res, 404, { error: 'Unknown currency code.' });
+  send(res, 200, { ok: true });
+}, { admin: true });
+
 route('GET', '/api/me', async (req, res, _p, user) => {
   const { streak, activeToday } = userStreak(user.id);
   // content_scope/can_view_analytics can change after login (stale session cookie), so read fresh.
@@ -1281,6 +1315,37 @@ route('PUT', '/api/admin/submissions/:id', async (req, res, p) => {
   send(res, 200, { ok: true });
 }, { staff: true });
 
+route('GET', '/api/admin/my-students', async (req, res, _p, user) => {
+  const manageable = (user.role === 'admin' || teacherFlags(user.id).content_scope !== 'own')
+    ? db.prepare('SELECT id FROM modules').all().map((m) => m.id)
+    : db.prepare('SELECT id FROM modules WHERE created_by = ?').all(user.id).map((m) => m.id);
+  if (!manageable.length) return send(res, 200, { students: [] });
+  const placeholders = manageable.map(() => '?').join(',');
+  const rows = db.prepare(`
+    SELECT u.id AS user_id, u.name, u.email, m.id AS module_id, m.title AS module_title,
+      e.purchased_at, e.price_paid, s.free_access,
+      (SELECT COUNT(*) FROM lesson_progress lp JOIN lessons l ON l.id = lp.lesson_id WHERE lp.user_id = u.id AND l.module_id = m.id) AS lessons_done,
+      (SELECT COUNT(*) FROM lessons WHERE module_id = m.id) AS lessons_total,
+      (SELECT 1 FROM module_completions mc WHERE mc.user_id = u.id AND mc.module_id = m.id) AS completed
+    FROM modules m
+    JOIN enrollments e ON e.module_id = m.id
+    JOIN users u ON u.id = e.user_id
+    LEFT JOIN user_module_settings s ON s.user_id = u.id AND s.module_id = m.id
+    WHERE m.id IN (${placeholders})
+    UNION
+    SELECT u.id AS user_id, u.name, u.email, m.id AS module_id, m.title AS module_title,
+      NULL AS purchased_at, NULL AS price_paid, s.free_access,
+      (SELECT COUNT(*) FROM lesson_progress lp JOIN lessons l ON l.id = lp.lesson_id WHERE lp.user_id = u.id AND l.module_id = m.id) AS lessons_done,
+      (SELECT COUNT(*) FROM lessons WHERE module_id = m.id) AS lessons_total,
+      (SELECT 1 FROM module_completions mc WHERE mc.user_id = u.id AND mc.module_id = m.id) AS completed
+    FROM modules m
+    JOIN user_module_settings s ON s.module_id = m.id AND s.free_access = 1
+    JOIN users u ON u.id = s.user_id
+    WHERE m.id IN (${placeholders}) AND u.id NOT IN (SELECT user_id FROM enrollments WHERE module_id = m.id)
+    ORDER BY name`).all(...manageable, ...manageable);
+  send(res, 200, { students: rows.map((r) => ({ ...r, completed: !!r.completed, free_access: !!r.free_access })) });
+}, { staff: true });
+
 route('GET', '/api/admin/users', async (req, res) => {
   const users = db.prepare(`
     SELECT u.id, u.name, u.email, u.role, u.designation, u.content_scope, u.can_view_analytics, u.created_at,
@@ -1322,7 +1387,8 @@ route('GET', '/api/admin/users/:id', async (req, res, p) => {
   send(res, 200, { user, modules: rows });
 }, { admin: true });
 
-route('PUT', '/api/admin/users/:id/modules/:mid', async (req, res, p) => {
+route('PUT', '/api/admin/users/:id/modules/:mid', async (req, res, p, user) => {
+  if (!canManageModule(user, moduleCreatedBy(p.mid))) return send(res, 403, { error: "You can only manage enrollment for modules you created." });
   const b = await readBody(req);
   const custom = (b.custom_price === '' || b.custom_price === null || b.custom_price === undefined) ? null : Number(b.custom_price);
   if (custom !== null && (Number.isNaN(custom) || custom < 0)) return send(res, 400, { error: 'Custom price must be a positive number.' });
@@ -1334,7 +1400,7 @@ route('PUT', '/api/admin/users/:id/modules/:mid', async (req, res, p) => {
     .run(p.id, p.mid, custom, b.free_access ? 1 : 0, b.unlock_override ? 1 : 0);
   if (b.revoke_purchase) db.prepare('DELETE FROM enrollments WHERE user_id = ? AND module_id = ?').run(p.id, p.mid);
   send(res, 200, { ok: true });
-}, { admin: true });
+}, { staff: true });
 
 // ---------- server ----------
 async function handleRequest(req, res) {

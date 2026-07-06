@@ -62,7 +62,18 @@ function themeBtnHTML() {
 }
 function icon(name) { return ICONS[name] || ''; }
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
-function money(n) { return n === 0 ? '<span class="free">Free</span>' : '$' + Number(n).toFixed(2).replace(/\.00$/, ''); }
+
+// All prices arrive from the API in USD; conversion + formatting happens here
+// based on whatever currency the admin has set as active for the platform.
+let activeCurrency = { code: 'USD', symbol: '$', rate_per_usd: 1 };
+async function loadCurrency() {
+  try { activeCurrency = (await api('/api/currency')).active; } catch { /* keep USD default */ }
+}
+function money(n) {
+  if (n === 0) return '<span class="free">Free</span>';
+  const converted = Number(n) * activeCurrency.rate_per_usd;
+  return activeCurrency.symbol + converted.toFixed(2).replace(/\.00$/, '');
+}
 
 async function api(path, opts = {}) {
   const res = await fetch(path, {
@@ -1463,6 +1474,6 @@ function render() {
 window.addEventListener('hashchange', render);
 
 (async function init() {
-  await refreshMe();
+  await Promise.all([refreshMe(), loadCurrency()]);
   render();
 })();

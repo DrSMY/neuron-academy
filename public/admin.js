@@ -56,7 +56,16 @@ function toggleTheme(btn) {
   }
 }
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
-function money(n) { return '$' + Number(n).toFixed(2).replace(/\.00$/, ''); }
+// All prices arrive from the API in USD; conversion + formatting happens here
+// based on whatever currency the admin has set as active for the platform.
+let activeCurrency = { code: 'USD', symbol: '$', rate_per_usd: 1 };
+async function loadCurrency() {
+  try { activeCurrency = (await api('/api/currency')).active; } catch { /* keep USD default */ }
+}
+function money(n) {
+  const converted = Number(n) * activeCurrency.rate_per_usd;
+  return activeCurrency.symbol + converted.toFixed(2).replace(/\.00$/, '');
+}
 
 async function api(path, opts = {}) {
   const res = await fetch(path, {
@@ -129,6 +138,7 @@ function shell(content) {
       ${isAdmin() ? `<button class="side-link ${view === 'overview' ? 'active' : ''}" data-view="overview">${icon('home')} Overview</button>` : ''}
       <button class="side-link ${view === 'modules' || view === 'editor' ? 'active' : ''}" data-view="modules">${icon('layers')} Modules</button>
       ${isAdmin() ? `<button class="side-link ${view === 'users' || view === 'userDetail' ? 'active' : ''}" data-view="users">${icon('users')} Users & Pricing</button>` : ''}
+      ${!isAdmin() ? `<button class="side-link ${view === 'myStudents' ? 'active' : ''}" data-view="myStudents">${icon('users')} My Students</button>` : ''}
       <button class="side-link ${view === 'submissions' ? 'active' : ''}" data-view="submissions">${icon('inbox')} Submissions</button>
       ${canViewAnalytics() ? `<button class="side-link ${view === 'analytics' ? 'active' : ''}" data-view="analytics">${icon('chart')} Analytics</button>` : ''}
     </aside>
@@ -918,6 +928,56 @@ function assignmentForm(moduleId, asg) {
 }
 
 // ---------- submissions inbox ----------
+async function renderMyStudents() {
+  app.innerHTML = shell('<div class="skeleton" style="min-height:300px"></div>');
+  bindShell();
+  const { students } = await api('/api/admin/my-students');
+  $('.admin-main').innerHTML = `
+    <div class="page-head"><span class="eyebrow">Your roster</span><h1>My Students</h1>
+    <p>Everyone enrolled in a module you created${me.content_scope === 'own' ? '' : ' (your account can currently manage all modules — ask an admin to switch you to "only modules they created" for a stricter roster)'}.</p></div>
+    <div class="card table-card">
+      ${students.length ? `
+      <table class="data">
+        <thead><tr><th>Student</th><th>Module</th><th>Access</th><th>Progress</th><th>Enrolled</th><th></th></tr></thead>
+        <tbody>${students.map((s) => `
+          <tr>
+            <td class="t-strong">${esc(s.name)}<div class="drag-hint">${esc(s.email)}</div></td>
+            <td>${esc(s.module_title)}</td>
+            <td>${s.free_access ? '<span class="badge level">Free access</span>' : money(s.price_paid)}</td>
+            <td class="num">${s.completed ? `<span class="badge completed">${icon('check')} Completed</span>` : `${s.lessons_done}/${s.lessons_total} lessons`}</td>
+            <td>${s.purchased_at ? esc(s.purchased_at.slice(0, 10)) : '—'}</td>
+            <td style="text-align:right;white-space:nowrap">
+              <button class="btn btn-ghost btn-sm" data-toggle-free="${s.user_id}:${s.module_id}" data-free="${s.free_access ? 1 : 0}">${s.free_access ? 'Remove free access' : 'Grant free access'}</button>
+              <button class="btn btn-danger btn-sm" data-revoke="${s.user_id}:${s.module_id}" aria-label="Revoke access">${icon('trash')}</button>
+            </td>
+          </tr>`).join('')}
+        </tbody>
+      </table>` : `<div class="empty">${icon('users')}<h3>No students yet</h3><p>Once learners enroll in a module you created, they'll show up here.</p></div>`}
+    </div>`;
+
+  document.querySelectorAll('[data-toggle-free]').forEach((b) => {
+    b.onclick = async () => {
+      const [userId, modId] = b.dataset.toggleFree.split(':');
+      const makeFree = b.dataset.free !== '1';
+      try {
+        await api(`/api/admin/users/${userId}/modules/${modId}`, { method: 'PUT', body: { free_access: makeFree } });
+        toast(makeFree ? 'Free access granted.' : 'Free access removed.');
+        renderMyStudents();
+      } catch (err) { toast(err.message, 'error'); }
+    };
+  });
+  document.querySelectorAll('[data-revoke]').forEach((b) => {
+    b.onclick = () => confirmDialog('Revoke access?', 'This removes their enrollment in this module — their progress stays on record but they lose access until they re-enroll.', async () => {
+      const [userId, modId] = b.dataset.revoke.split(':');
+      try {
+        await api(`/api/admin/users/${userId}/modules/${modId}`, { method: 'PUT', body: { revoke_purchase: true } });
+        toast('Access revoked.');
+        renderMyStudents();
+      } catch (err) { toast(err.message, 'error'); }
+    });
+  });
+}
+
 async function renderSubmissions() {
   app.innerHTML = shell('<div class="skeleton" style="min-height:300px"></div>');
   bindShell();
@@ -1036,12 +1096,21 @@ async function renderAnalytics() {
 async function renderUsers() {
   app.innerHTML = shell('<div class="skeleton" style="min-height:300px"></div>');
   bindShell();
-  const { users } = await api('/api/admin/users');
+  const [{ users }, { all: currencies }] = await Promise.all([api('/api/admin/users'), api('/api/currency')]);
   const roleBadge = (u) => u.role === 'admin' ? '<span class="badge ready">Admin</span>'
     : u.role === 'teacher' ? `<span class="badge completed">${icon('sparkle')} Teacher</span>` : 'Learner';
   $('.admin-main').innerHTML = `
     <div class="page-head"><span class="eyebrow">Access control</span><h1>Users & Pricing</h1>
     <p>Click a user to set custom per-module prices, grant free access, or override the sequential lock. Use <strong>Role</strong> to give someone teacher privileges — they can then create subjects, tracks, modules, and lessons, and grade submissions.</p></div>
+    <div class="card editor-block" style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:20px">
+      <div style="flex:1;min-width:200px">
+        <h4 style="font-size:14.5px;margin-bottom:2px">Platform currency</h4>
+        <p class="drag-hint">All prices are stored in USD and converted for display. Changing this affects every learner and admin view.</p>
+      </div>
+      <select id="currency-select" style="width:auto;min-width:220px">
+        ${currencies.map((c) => `<option value="${c.code}" ${c.code === activeCurrency.code ? 'selected' : ''}>${c.symbol} ${esc(c.name)} (${c.code})</option>`).join('')}
+      </select>
+    </div>
     <div class="card table-card">
       <table class="data">
         <thead><tr><th>User</th><th>Email</th><th>Role</th><th>Owns</th><th>Completed</th><th>Spent</th><th>Joined</th><th></th></tr></thead>
@@ -1062,6 +1131,14 @@ async function renderUsers() {
         </tbody>
       </table>
     </div>`;
+  $('#currency-select').onchange = async (e) => {
+    try {
+      await api('/api/admin/settings/currency', { method: 'PUT', body: { code: e.target.value } });
+      await loadCurrency();
+      toast(`Currency set to ${activeCurrency.code}.`);
+      renderUsers();
+    } catch (err) { toast(err.message, 'error'); }
+  };
   document.querySelectorAll('[data-user]').forEach((b) => {
     b.onclick = () => { view = 'userDetail'; renderUserDetail(Number(b.dataset.user)); };
   });
@@ -1172,9 +1249,9 @@ async function renderUserDetail(userId) {
 
 // ---------- router ----------
 function render() {
-  const views = { overview: renderOverview, modules: renderModules, users: renderUsers, analytics: renderAnalytics, submissions: renderSubmissions };
+  const views = { overview: renderOverview, modules: renderModules, users: renderUsers, myStudents: renderMyStudents, analytics: renderAnalytics, submissions: renderSubmissions };
   const fallback = isAdmin() ? renderOverview : renderModules;
-  const guarded = { overview: isAdmin, users: isAdmin, userDetail: isAdmin, analytics: canViewAnalytics };
+  const guarded = { overview: isAdmin, users: isAdmin, userDetail: isAdmin, myStudents: () => !isAdmin(), analytics: canViewAnalytics };
   if (guarded[view] && !guarded[view]()) view = 'modules';
   (views[view] || fallback)().catch((err) => {
     if (err.status === 401 || err.status === 403) location.href = '/';
@@ -1184,7 +1261,7 @@ function render() {
 
 (async function init() {
   try {
-    const d = await api('/api/me');
+    const [d] = await Promise.all([api('/api/me'), loadCurrency()]);
     me = d.user;
     if (me.role !== 'admin' && me.role !== 'teacher') { location.href = '/'; return; }
     view = me.role === 'admin' ? 'overview' : 'modules';
