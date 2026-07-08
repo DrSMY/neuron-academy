@@ -34,6 +34,8 @@ const ICONS = {
   search: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
   sun: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v2.4m0 14.2v2.4M4.9 4.9l1.7 1.7m10.8 10.8 1.7 1.7M2.5 12h2.4m14.2 0h2.4M4.9 19.1l1.7-1.7M17.4 6.6l1.7-1.7"/></svg>',
   moon: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z"/></svg>',
+  users: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.2 3.4-5 6.5-5s5.7 1.8 6.5 5M16 4.7a3.5 3.5 0 0 1 0 6.6M18 15.2c1.8.7 3 2.1 3.5 4.3"/></svg>',
+  medal: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="15" r="6"/><path d="M12 12.5 13 15h-2zM8.5 9.5 5 3m10.5 6.5L19 3M9 3l3 6 3-6"/></svg>',
 };
 const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -135,6 +137,8 @@ function shell(active, content) {
         ${navItem('catalog', '#/catalog', 'layers', 'Explore')}
         ${navItem('learning', '#/learning', 'book', 'My Learning')}
         ${navItem('review', '#/review', 'zap', 'Review', duePill)}
+        ${navItem('leaderboard', '#/leaderboard', 'trophy', 'Leaderboard')}
+        ${me.role === 'leader' ? navItem('group', '#/group', 'users', 'My Group') : ''}
         ${me.role === 'admin' || me.role === 'teacher' ? navItem('admin', '/admin', 'sparkle', me.role === 'admin' ? 'Admin Panel' : 'Teacher Panel') : ''}
       </nav>
       <div class="snav-spacer"></div>
@@ -160,8 +164,10 @@ function shell(active, content) {
   </div>
   <nav class="bottomnav" aria-label="Primary">
     <a class="${active === 'catalog' ? 'active' : ''}" href="#/catalog">${icon('layers')}<span>Explore</span></a>
-    <a class="${active === 'learning' ? 'active' : ''}" href="#/learning">${icon('book')}<span>My Learning</span></a>
+    <a class="${active === 'learning' ? 'active' : ''}" href="#/learning">${icon('book')}<span>Learning</span></a>
     <a class="${active === 'review' ? 'active' : ''}" href="#/review">${icon('zap')}<span>Review</span>${meStats?.dueReviews ? `<i class="dot"></i>` : ''}</a>
+    <a class="${active === 'leaderboard' ? 'active' : ''}" href="#/leaderboard">${icon('trophy')}<span>Ranks</span></a>
+    ${me.role === 'leader' ? `<a class="${active === 'group' ? 'active' : ''}" href="#/group">${icon('users')}<span>Group</span></a>` : ''}
   </nav>`;
 }
 
@@ -334,25 +340,37 @@ async function renderCatalog() {
       grid.outerHTML = `<div class="card empty">${icon('sparkle')}<h3>No subjects yet</h3><p>The catalog is being prepared. Check back soon.</p></div>`;
       return;
     }
+    // Quick-jump chips to each subject header, then a section per subject with
+    // its modules laid out under the header for easy browsing.
+    const allModules = subjects.flatMap((s) => s.tracks.flatMap((t) => t.modules));
     grid.innerHTML = `
-    <div class="subject-grid">
-      ${subjects.map((s, i) => {
-        const pct = s.moduleCount ? Math.round((s.completed / s.moduleCount) * 100) : 0;
-        return `
-        <a class="card subject-card" href="#/subject/${s.id}">
-          ${thumbHTML(i, 'sm')}
-          <h3>${esc(s.title)}</h3>
-          <p class="desc">${esc(s.description)}</p>
-          <div class="meta">
-            <span>${icon('layers')} ${s.tracks.length} track${s.tracks.length === 1 ? '' : 's'}</span>
-            <span>${icon('book')} ${s.moduleCount} module${s.moduleCount === 1 ? '' : 's'}</span>
+    <div class="subject-jump">
+      ${subjects.map((s) => `<a class="chip" href="#subject-${s.id}">${icon('layers')} ${esc(s.title)}</a>`).join('')}
+    </div>
+    ${subjects.map((s, i) => {
+      const pct = s.moduleCount ? Math.round((s.completed / s.moduleCount) * 100) : 0;
+      const mods = s.tracks.flatMap((t) => t.modules);
+      return `
+      <section class="subject-section" id="subject-${s.id}">
+        <div class="subject-section-head">
+          ${thumbHTML(i)}
+          <div class="ss-info">
+            <h2>${esc(s.title)}</h2>
+            <p>${esc(s.description)}</p>
+            <div class="meta">
+              <span>${icon('layers')} ${s.tracks.length} track${s.tracks.length === 1 ? '' : 's'}</span>
+              <span>${icon('book')} ${s.moduleCount} module${s.moduleCount === 1 ? '' : 's'}</span>
+              ${s.ownedCount ? `<span>${icon('check')} ${s.completed}/${s.moduleCount} done</span>` : ''}
+            </div>
           </div>
-          ${s.ownedCount ? `<div class="progress-track" style="margin:12px 0 6px"><div class="progress-fill" style="width:${pct}%"></div></div>
-          <span class="cl-meta">${s.completed}/${s.moduleCount} modules completed</span>` : ''}
-          <span class="btn btn-ghost btn-sm" style="margin-top:14px;align-self:flex-start">Explore ${icon('arrowRight')}</span>
-        </a>`;
-      }).join('')}
-    </div>`;
+          <a class="btn btn-ghost btn-sm ss-path" href="#/subject/${s.id}">Guided path ${icon('arrowRight')}</a>
+        </div>
+        ${s.ownedCount ? `<div class="progress-track" style="margin:0 0 16px"><div class="progress-fill" style="width:${pct}%"></div></div>` : ''}
+        ${mods.length ? `<div class="grid">${mods.map((m, mi) => moduleCard(m, mi)).join('')}</div>`
+          : `<div class="card empty" style="padding:28px">${icon('sparkle')}<h3>Coming soon</h3><p>Modules for this subject are being prepared.</p></div>`}
+      </section>`;
+    }).join('')}`;
+    bindBuyButtons(grid, allModules);
   } catch (err) {
     if (err.status === 401) { me = null; render(); return; }
     toast(err.message, 'error');
@@ -644,7 +662,27 @@ function blockShellHTML(bi, label, prompt, inner) {
 function blockHTML(b, bi) {
   switch (b.type) {
     case 'text': return `<div class="lesson-content">${b.html}</div>`;
-    case 'video': return `<iframe class="video-frame" src="${esc(b.url)}" title="Lesson video" allowfullscreen loading="lazy"></iframe>`;
+    case 'video': {
+      const hasQuiz = Array.isArray(b.quiz) && b.quiz.length > 0;
+      const summary = b.summary ? `
+        <details class="video-summary" open>
+          <summary>${icon('note')} Key takeaways</summary>
+          <div class="video-summary-body">${b.summary}</div>
+        </details>` : '';
+      const quiz = hasQuiz ? blockShellHTML(bi, 'Watch & answer', 'Answer to check you caught the key points.', `
+        <div class="video-quiz" data-vquiz="${bi}">
+          ${b.quiz.map((q, qi) => `
+          <div class="vq-item" data-vq="${qi}">
+            <p class="vq-q"><span class="q-num">${qi + 1}.</span> ${esc(q.q)}</p>
+            ${shuffled(q.options.map((text, k) => ({ i: k, v: text }))).map((o) => `
+            <label class="quiz-opt"><input type="radio" name="vq-${bi}-${qi}" value="${o.i}"> <span>${esc(o.v)}</span></label>`).join('')}
+          </div>`).join('')}
+        </div>
+        <div class="ex-actions"><button class="btn btn-primary btn-sm" data-check-vquiz="${bi}">${icon('check')} Check answers</button></div>`) : '';
+      return `<div class="video-block">
+        <iframe class="video-frame" src="${esc(b.url)}" title="Lesson video" allowfullscreen loading="lazy"></iframe>
+        ${summary}${quiz}</div>`;
+    }
     case 'code':
       return blockShellHTML(bi, 'Code playground', b.instructions, `
         <textarea class="code-editor" data-code="${bi}" spellcheck="false" aria-label="Code editor">${esc(b.starter || '')}</textarea>
@@ -850,6 +888,29 @@ function bindBlocks(lesson) {
       } else toast('Some blanks are not right yet.', 'error');
     };
   });
+
+  // video checkpoint quizzes
+  panel.querySelectorAll('[data-check-vquiz]').forEach((btn) => {
+    const bi = Number(btn.dataset.checkVquiz);
+    const b = lesson.blocks[bi];
+    btn.onclick = () => {
+      let allOk = true;
+      b.quiz.forEach((q, qi) => {
+        const item = panel.querySelector(`[data-vquiz="${bi}"] [data-vq="${qi}"]`);
+        const picked = item.querySelector('input:checked');
+        item.querySelectorAll('.quiz-opt').forEach((o) => o.classList.remove('correct', 'wrong'));
+        if (!picked) { allOk = false; return; }
+        const ok = Number(picked.value) === q.correct_index;
+        picked.closest('.quiz-opt').classList.add(ok ? 'correct' : 'wrong');
+        if (!ok) allOk = false;
+      });
+      if (allOk) {
+        panel.querySelectorAll(`[data-vquiz="${bi}"] input`).forEach((inp) => { inp.disabled = true; });
+        btn.disabled = true;
+        markSolved(bi, 'Quiz passed');
+      } else toast('Not quite — review the video and try again.', 'error');
+    };
+  });
 }
 
 // ---------- notes & highlights ----------
@@ -964,6 +1025,10 @@ function bindTutor(lesson) {
 }
 
 const INTERACTIVE_TYPES = new Set(['code', 'order', 'match', 'blank']);
+// A video block becomes a gated exercise when it carries a checkpoint quiz.
+function blockIsInteractive(b) {
+  return INTERACTIVE_TYPES.has(b.type) || (b.type === 'video' && Array.isArray(b.quiz) && b.quiz.length > 0);
+}
 
 function drawLesson() {
   const mod = currentModule;
@@ -977,7 +1042,7 @@ function drawLesson() {
     : 'Mark complete & continue';
 
   exState.solved = new Set();
-  exState.interactive = l.blocks.filter((b) => INTERACTIVE_TYPES.has(b.type)).length;
+  exState.interactive = l.blocks.filter(blockIsInteractive).length;
 
   panel.innerHTML = `
     <h2>${esc(l.title)}</h2>
@@ -1283,6 +1348,160 @@ async function renderReview() {
   draw();
 }
 
+// ---------- leaderboard ----------
+let lbSubject = null; // null = overall
+async function renderLeaderboard() {
+  app.innerHTML = shell('leaderboard', '<div class="skeleton" style="min-height:340px"></div>');
+  bindShell();
+  let data;
+  try {
+    data = await api(`/api/leaderboard${lbSubject ? '?subject=' + lbSubject : ''}`);
+  } catch (err) { if (err.status === 401) { me = null; render(); } else toast(err.message, 'error'); return; }
+
+  const rankMedal = (r) => r === 1 ? '🥇' : r === 2 ? '🥈' : r === 3 ? '🥉' : `<span class="lb-rank-num">${r}</span>`;
+  const me3 = data.leaderboard.filter((r) => r.rank <= 3);
+
+  $('.container').innerHTML = `
+    <div class="page-head" style="margin-bottom:20px">
+      <span class="eyebrow">Compete & climb</span>
+      <h1>Leaderboard</h1>
+      <p>Ranked by XP earned, with badges as the tie-breaker. Keep a streak, ace quizzes and finish modules to rise.</p>
+    </div>
+    <div class="lb-filter">
+      <button class="chip ${!lbSubject ? 'active' : ''}" data-subj="">Overall</button>
+      ${data.subjects.map((s) => `<button class="chip ${lbSubject === s.id ? 'active' : ''}" data-subj="${s.id}">${esc(s.title)}</button>`).join('')}
+    </div>
+    ${me3.length ? `<div class="lb-podium">
+      ${[2, 1, 3].filter((p) => me3.find((r) => r.rank === p)).map((p) => {
+        const r = me3.find((x) => x.rank === p);
+        return `<div class="lb-pod lb-pod-${p} ${r.you ? 'you' : ''}">
+          <div class="lb-medal">${rankMedal(p)}</div>
+          <div class="avatar lb-avatar">${esc(r.name.trim().charAt(0).toUpperCase())}</div>
+          <strong>${esc(r.name)}${r.you ? ' (you)' : ''}</strong>
+          <span class="lb-xp">${r.xp} XP</span>
+          <span class="lb-badges">${icon('trophy')} ${r.badges}</span>
+        </div>`;
+      }).join('')}
+    </div>` : ''}
+    <div class="card table-card">
+      ${data.leaderboard.length ? `
+      <table class="data lb-table">
+        <thead><tr><th>#</th><th>Learner</th><th>Level</th><th>Badges</th><th>XP</th></tr></thead>
+        <tbody>${data.leaderboard.map((r) => `
+          <tr class="${r.you ? 'lb-you' : ''}">
+            <td class="num lb-rankcell">${rankMedal(r.rank)}</td>
+            <td class="t-strong">${esc(r.name)}${r.you ? ' <span class="badge ready" style="margin-left:6px">You</span>' : ''}</td>
+            <td class="num">${r.level}</td>
+            <td class="num">${icon('trophy')} ${r.badges}</td>
+            <td class="num" style="color:var(--accent-bright);font-weight:700">${r.xp}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>` : `<div class="empty">${icon('trophy')}<h3>No ranked learners yet</h3><p>Earn some XP by completing lessons and quizzes to appear here.</p></div>`}
+    </div>`;
+
+  document.querySelectorAll('.lb-filter .chip').forEach((b) => {
+    b.onclick = () => { lbSubject = b.dataset.subj ? Number(b.dataset.subj) : null; renderLeaderboard(); };
+  });
+}
+
+// ---------- group leader ----------
+async function renderGroup() {
+  app.innerHTML = shell('group', '<div class="skeleton" style="min-height:340px"></div>');
+  bindShell();
+  let data;
+  try { data = await api('/api/leader/overview'); }
+  catch (err) { if (err.status === 401) { me = null; render(); } else toast(err.message, 'error'); return; }
+  const { group, subjects, members } = data;
+  const subjName = subjects.find((s) => s.id === group.subject_id)?.title;
+
+  const totals = members.reduce((acc, m) => ({ xp: acc.xp + m.xp, done: acc.done + m.modulesDone }), { xp: 0, done: 0 });
+
+  $('.container').innerHTML = `
+    <div class="page-head" style="margin-bottom:18px">
+      <span class="eyebrow">Cohort</span>
+      <h1>${esc(group.name)}</h1>
+      <p>Add learners to your group and track how they're progressing${subjName ? ` in <strong>${esc(subjName)}</strong>` : ''}. ${subjName ? '' : 'Pick a subject below to focus the analytics.'}</p>
+    </div>
+
+    <div class="stat-grid" style="margin-bottom:22px">
+      <div class="card stat-card"><div class="label">${icon('users')} Members</div><div class="value">${members.length}</div></div>
+      <div class="card stat-card"><div class="label">${icon('zap')} Group XP</div><div class="value">${totals.xp}</div></div>
+      <div class="card stat-card"><div class="label">${icon('trophy')} Modules done</div><div class="value">${totals.done}</div></div>
+    </div>
+
+    <div class="card editor-block" style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;margin-bottom:22px">
+      <div class="field" style="margin:0;flex:1;min-width:180px">
+        <label>Group name</label><input id="g-name" value="${esc(group.name)}">
+      </div>
+      <div class="field" style="margin:0;flex:1;min-width:180px">
+        <label>Focus subject (for analytics)</label>
+        <select id="g-subject">
+          <option value="">All subjects</option>
+          ${subjects.map((s) => `<option value="${s.id}" ${group.subject_id === s.id ? 'selected' : ''}>${esc(s.title)}</option>`).join('')}
+        </select>
+      </div>
+      <button class="btn btn-ghost" id="g-save">Save</button>
+    </div>
+
+    <div class="section-row"><h3>Add a learner</h3></div>
+    <div class="card editor-block" style="margin-bottom:22px">
+      <div class="row-2">
+        <div class="field" style="margin:0"><label>Email <span class="req">*</span></label><input id="m-email" type="email" placeholder="learner@example.com"></div>
+        <div class="field" style="margin:0"><label>Name <span style="color:var(--fg-faint);font-weight:400">(if new account)</span></label><input id="m-name" placeholder="Ada Lovelace"></div>
+      </div>
+      <div class="hint" style="margin:8px 0 12px">If the email isn't registered yet, a learner account is created and a temporary password is shown once for you to share.</div>
+      <button class="btn btn-primary btn-sm" id="m-add">${icon('plus')} Add to group</button>
+    </div>
+
+    <div class="section-row"><h3>Members (${members.length})</h3></div>
+    <div class="card table-card">
+      ${members.length ? `
+      <table class="data">
+        <thead><tr><th>Learner</th><th>${subjName ? esc(subjName) + ' XP' : 'XP'}</th><th>Lessons</th><th>Modules done</th><th>Badges</th><th></th></tr></thead>
+        <tbody>${members.map((m) => `
+          <tr>
+            <td class="t-strong">${esc(m.name)}<div class="drag-hint">${esc(m.email)}</div></td>
+            <td class="num" style="color:var(--accent-bright);font-weight:700">${m.xp}</td>
+            <td class="num">${m.lessonsDone}</td>
+            <td class="num">${m.modulesDone}${subjName ? ` / ${m.modulesTotal}` : ''}</td>
+            <td class="num">${icon('trophy')} ${m.badges}</td>
+            <td style="text-align:right"><button class="btn btn-danger btn-sm" data-remove="${m.id}" aria-label="Remove">${icon('trash')}</button></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>` : `<div class="empty">${icon('users')}<h3>No members yet</h3><p>Add learners by email above to start tracking your cohort.</p></div>`}
+    </div>`;
+
+  $('#g-save').onclick = async () => {
+    try {
+      await api('/api/leader/group', { method: 'PUT', body: { name: $('#g-name').value.trim(), subject_id: $('#g-subject').value || null } });
+      toast('Group updated.');
+      renderGroup();
+    } catch (err) { toast(err.message, 'error'); }
+  };
+  $('#m-add').onclick = async () => {
+    const email = $('#m-email').value.trim();
+    if (!email) { toast('Enter an email.', 'error'); return; }
+    try {
+      const r = await api('/api/leader/members', { method: 'POST', body: { email, name: $('#m-name').value.trim() } });
+      if (r.created && r.tempPassword) {
+        openModal(`
+          <div class="modal-head"><h3>Learner added</h3><button class="icon-btn" data-close aria-label="Close">${icon('x')}</button></div>
+          <p style="color:var(--fg-muted);margin-bottom:14px">A new account was created for <strong>${esc(email)}</strong>. Share this temporary password — they can change it later.</p>
+          <div class="checkout-summary"><span>Temporary password</span><span class="price" style="font-family:monospace">${esc(r.tempPassword)}</span></div>
+          <button class="btn btn-primary" style="width:100%;margin-top:16px" data-close>Got it</button>`);
+      } else if (r.already) { toast('That learner is already in your group.'); }
+      else { toast('Added to group.'); }
+      renderGroup();
+    } catch (err) { toast(err.message, 'error'); }
+  };
+  document.querySelectorAll('[data-remove]').forEach((b) => {
+    b.onclick = () => confirmish(b.dataset.remove);
+  });
+  function confirmish(id) {
+    api(`/api/leader/members/${id}`, { method: 'DELETE' }).then(() => { toast('Removed from group.'); renderGroup(); }).catch((err) => toast(err.message, 'error'));
+  }
+}
+
 function heatmapHTML(heat) {
   const byDay = new Map(heat.map((h) => [h.day, h.n]));
   const cells = [];
@@ -1478,6 +1697,8 @@ function render() {
   if (mSubject) { renderSubject(Number(mSubject[1])); return; }
   if (hash.startsWith('#/catalog')) { renderCatalog(); return; }
   if (hash.startsWith('#/review')) { renderReview(); return; }
+  if (hash.startsWith('#/leaderboard')) { renderLeaderboard(); return; }
+  if (hash.startsWith('#/group')) { renderGroup(); return; }
   renderLearning(); // #/learning and unrecognized hashes (including legacy #/home)
 }
 window.addEventListener('hashchange', render);

@@ -559,6 +559,29 @@ const BLOCK_META = {
   blank: { label: 'Fill blanks', hint: '{{answer}} placeholders' },
 };
 
+// Video checkpoint quiz <-> plain text. One question per blank-line-separated
+// block: first line is the question, following lines are options, the correct
+// option carries a leading "*".
+function serializeVideoQuiz(quiz) {
+  if (!Array.isArray(quiz) || !quiz.length) return '';
+  return quiz.map((q) => [q.q, ...q.options.map((o, i) => (i === q.correct_index ? '*' : '') + o)].join('\n')).join('\n\n');
+}
+function parseVideoQuiz(raw) {
+  const blocks = (raw || '').split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
+  const quiz = [];
+  for (const blk of blocks) {
+    const lines = blk.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (lines.length < 3) continue; // need a question + at least 2 options
+    const q = lines[0];
+    const opts = lines.slice(1);
+    let correct = opts.findIndex((o) => o.startsWith('*'));
+    if (correct < 0) correct = 0;
+    const options = opts.map((o) => o.replace(/^\*/, '').trim());
+    quiz.push({ q, options, correct_index: correct });
+  }
+  return quiz;
+}
+
 function blockEditorHTML(b, i) {
   const meta = BLOCK_META[b.type];
   let body = '';
@@ -566,7 +589,13 @@ function blockEditorHTML(b, i) {
     <div class="field"><label>HTML content</label><textarea data-f="html" data-i="${i}" style="min-height:150px;font-family:monospace;font-size:13px">${esc(b.html || '')}</textarea>
     <div class="hint">Supports &lt;h3&gt;, &lt;p&gt;, &lt;ul&gt;, &lt;ol&gt;, &lt;strong&gt;, &lt;em&gt;…</div></div>`;
   if (b.type === 'video') body = `
-    <div class="field"><label>Embed URL</label><input data-f="url" data-i="${i}" value="${esc(b.url || '')}" placeholder="https://www.youtube.com/embed/VIDEO_ID"></div>`;
+    <div class="field"><label>Embed URL</label><input data-f="url" data-i="${i}" value="${esc(b.url || '')}" placeholder="https://www.youtube.com/embed/VIDEO_ID"></div>
+    <div class="field"><label>Summary <span style="color:var(--fg-faint);font-weight:400">(optional — key takeaways shown under the video)</span></label>
+    <textarea data-f="summary" data-i="${i}" style="min-height:80px">${esc(b.summary || '')}</textarea>
+    <div class="hint">Supports the same HTML tags as a text block.</div></div>
+    <div class="field"><label>Checkpoint quiz <span style="color:var(--fg-faint);font-weight:400">(optional — learners must pass to continue)</span></label>
+    <textarea data-f="videoquiz" data-i="${i}" style="min-height:110px;font-family:monospace;font-size:12.5px" placeholder="What did the video cover?\n*The correct answer\nA wrong answer\nAnother wrong answer">${esc(serializeVideoQuiz(b.quiz))}</textarea>
+    <div class="hint">One question per block (blank line between). First line = question; each option on its own line; mark the correct one with a leading <code>*</code>.</div></div>`;
   if (b.type === 'code') body = `
     <div class="field"><label>Instructions</label><input data-f="instructions" data-i="${i}" value="${esc(b.instructions || '')}" placeholder="What should the learner make the code do?"></div>
     <div class="field"><label>Starter code (JavaScript)</label><textarea data-f="starter" data-i="${i}" style="min-height:110px;font-family:monospace;font-size:13px">${esc(b.starter || '')}</textarea></div>
@@ -617,6 +646,7 @@ function lessonForm(moduleId, lesson) {
       else if (f === 'pairs') b.pairs = el.value.split('\n').map((s) => s.trim()).filter(Boolean)
         .map((line) => { const ix = line.indexOf('='); return { l: line.slice(0, ix).trim(), r: line.slice(ix + 1).trim() }; })
         .filter((p) => p.l && p.r);
+      else if (f === 'videoquiz') { const q = parseVideoQuiz(el.value); if (q.length) b.quiz = q; else delete b.quiz; }
       else b[f] = el.value;
     });
   }
@@ -1102,15 +1132,93 @@ async function renderAnalytics() {
 }
 
 // ---------- users ----------
+function userImportModal() {
+  const sample = 'name,email,role,password\nAda Lovelace,ada@example.com,learner,\nAlan Turing,alan@example.com,leader,\nGrace Hopper,grace@example.com,learner,changeme123';
+  openModal(`
+    <div class="modal-head">
+      <div><h3>Import users</h3><div class="sub">Add many people at once from a spreadsheet.</div></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon('x')}</button>
+    </div>
+    <div class="import-help">
+      <p><strong>How it works</strong> — paste rows below, or upload a <code>.csv</code>. The first row is the header.</p>
+      <ul class="import-steps">
+        <li><strong>name</strong> and <strong>email</strong> are required.</li>
+        <li><strong>role</strong> is optional — <code>learner</code> (default), <code>leader</code>, <code>teacher</code>, or <code>admin</code>.</li>
+        <li><strong>password</strong> is optional — leave blank and a temporary one is generated (shown after import to share).</li>
+        <li>Existing emails are skipped, so re-importing is safe.</li>
+      </ul>
+      <a class="sample-link" id="dl-sample">${icon('file')} Download a sample CSV <span>— name, email, role, password</span></a>
+    </div>
+    <div class="import-drop" id="user-drop">
+      ${icon('upload')}<strong>Drop a .csv here or click to choose</strong>
+      <span class="drag-hint" id="user-file-name">No file selected</span>
+      <input type="file" id="user-file" accept=".csv,text/csv" hidden>
+    </div>
+    <div class="field" style="margin-top:14px">
+      <label>…or paste rows</label>
+      <textarea id="user-csv" style="min-height:120px;font-family:monospace;font-size:12.5px" placeholder="${esc(sample)}"></textarea>
+    </div>
+    <div id="import-result"></div>
+    <button class="btn btn-primary" style="width:100%;margin-top:8px" id="do-import">${icon('upload')} Import users</button>`, true);
+
+  let fileText = '';
+  const drop = $('#user-drop');
+  const fileInput = $('#user-file');
+  drop.onclick = () => fileInput.click();
+  drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('drag'); };
+  drop.ondragleave = () => drop.classList.remove('drag');
+  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('drag'); if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); };
+  fileInput.onchange = () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); };
+  function loadFile(f) {
+    const reader = new FileReader();
+    reader.onload = () => { fileText = reader.result; $('#user-file-name').textContent = f.name; drop.classList.add('has-file'); };
+    reader.readAsText(f);
+  }
+  $('#dl-sample').onclick = () => {
+    const blob = new Blob([sample], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = 'neuroseed-users-sample.csv'; a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  $('#do-import').onclick = async () => {
+    const csv = ($('#user-csv').value.trim()) || fileText;
+    if (!csv.trim()) { toast('Paste rows or choose a file first.', 'error'); return; }
+    const btn = $('#do-import');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Importing…';
+    try {
+      const r = await api('/api/admin/users/import', { method: 'POST', body: { csv } });
+      const created = r.created.filter((c) => c.password);
+      $('#import-result').innerHTML = `
+        <div class="score-banner ${r.imported ? 'pass' : 'fail'}" style="display:block;margin:14px 0 0;padding:14px 18px">
+          <strong>${r.imported} imported${r.skipped ? `, ${r.skipped} skipped` : ''}.</strong>
+          ${created.length ? `<p style="margin:10px 0 0;font-size:13px">Temporary passwords (share these — shown once):</p>
+          <div style="font-family:monospace;font-size:12px;margin-top:6px;max-height:120px;overflow:auto">
+            ${created.map((c) => `${esc(c.email)} → ${esc(c.password)}`).join('<br>')}</div>` : ''}
+          ${r.details && r.details.length ? `<p style="margin:10px 0 4px;font-size:13px;color:var(--fg-muted)">Skipped rows:</p>
+          <div style="font-size:12px;color:var(--fg-muted)">${r.details.map((d) => esc(d)).join('<br>')}</div>` : ''}
+        </div>`;
+      btn.disabled = false; btn.innerHTML = `${icon('upload')} Import more`;
+      toast(`${r.imported} user${r.imported === 1 ? '' : 's'} imported.`);
+    } catch (err) {
+      toast(err.message, 'error');
+      btn.disabled = false; btn.innerHTML = `${icon('upload')} Import users`;
+    }
+  };
+}
+
 async function renderUsers() {
   app.innerHTML = shell('<div class="skeleton" style="min-height:300px"></div>');
   bindShell();
   const [{ users }, { all: currencies }] = await Promise.all([api('/api/admin/users'), api('/api/currency')]);
   const roleBadge = (u) => u.role === 'admin' ? '<span class="badge ready">Admin</span>'
-    : u.role === 'teacher' ? `<span class="badge completed">${icon('sparkle')} Teacher</span>` : 'Learner';
+    : u.role === 'teacher' ? `<span class="badge completed">${icon('sparkle')} Teacher</span>`
+    : u.role === 'leader' ? `<span class="badge level">${icon('users')} Leader</span>` : 'Learner';
   $('.admin-main').innerHTML = `
-    <div class="page-head"><span class="eyebrow">Access control</span><h1>Users & Pricing</h1>
-    <p>Click a user to set custom per-module prices, grant free access, or override the sequential lock. Use <strong>Role</strong> to give someone teacher privileges — they can then create subjects, tracks, modules, and lessons, and grade submissions.</p></div>
+    <div class="toolbar">
+      <div class="page-head" style="margin:0"><span class="eyebrow">Access control</span><h1>Users & Pricing</h1>
+      <p>Click a user to set custom per-module prices, grant free access, or override the sequential lock. Use <strong>Role</strong> to grant teacher, group-leader, or admin privileges.</p></div>
+      <button class="btn btn-primary" id="import-users">${icon('upload')} Import users</button>
+    </div>
     <div class="card editor-block" style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:20px">
       <div style="flex:1;min-width:200px">
         <h4 style="font-size:14.5px;margin-bottom:2px">Platform currency</h4>
@@ -1148,6 +1256,7 @@ async function renderUsers() {
       renderUsers();
     } catch (err) { toast(err.message, 'error'); }
   };
+  $('#import-users').onclick = () => userImportModal();
   document.querySelectorAll('[data-user]').forEach((b) => {
     b.onclick = () => { view = 'userDetail'; renderUserDetail(Number(b.dataset.user)); };
   });
@@ -1160,6 +1269,7 @@ async function renderUsers() {
           <div class="field"><label>Role</label>
             <select name="role">
               <option value="learner" ${u.role === 'learner' ? 'selected' : ''}>Learner</option>
+              <option value="leader" ${u.role === 'leader' ? 'selected' : ''}>Group leader — a learner who runs a cohort &amp; sees its analytics</option>
               <option value="teacher" ${u.role === 'teacher' ? 'selected' : ''}>Teacher — can author subjects, modules, lessons and grade work</option>
               <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin — full platform control</option>
             </select>

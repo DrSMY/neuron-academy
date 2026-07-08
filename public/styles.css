@@ -316,7 +316,8 @@ html[data-theme="light"] .brand .logo img.for-light { display: block; }
 
 .bottomnav {
   display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 150; width: 100%; min-width: 0; box-sizing: border-box;
-  grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 8px 10px calc(10px + env(safe-area-inset-bottom));
+  /* auto-flow so the bar adapts to 3, 4 or 5 items (leaders get a Group tab) */
+  grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); padding: 8px 6px calc(10px + env(safe-area-inset-bottom));
   background: var(--chrome-bg); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
   border-top: 1px solid var(--border);
 }
@@ -534,11 +535,82 @@ input::placeholder, textarea::placeholder { color: var(--fg-faint); }
 .lesson-content ul, .lesson-content ol { margin: 0 0 14px 22px; }
 .lesson-content li { margin-bottom: 7px; }
 .lesson-content strong { color: var(--fg); }
+.video-block { margin-bottom: 22px; }
 .video-frame {
   width: 100%; aspect-ratio: 16 / 9; border: 1px solid var(--border); border-radius: var(--radius-sm);
-  margin-bottom: 22px; background: #000;
+  margin-bottom: 0; background: #000; display: block;
 }
+.video-block .video-frame { margin-bottom: 14px; }
+.video-summary {
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--well-bg);
+  padding: 2px 16px; margin-bottom: 14px;
+}
+.video-summary > summary {
+  display: flex; align-items: center; gap: 9px; padding: 12px 0; cursor: pointer;
+  font-weight: 600; font-size: 14.5px; color: var(--fg); list-style: none;
+}
+.video-summary > summary::-webkit-details-marker { display: none; }
+.video-summary > summary svg { width: 16px; height: 16px; stroke: var(--accent-bright); }
+.video-summary-body { color: var(--content-fg); font-size: 15px; padding: 0 0 14px; }
+.video-summary-body p { margin-bottom: 10px; }
+.video-quiz { display: flex; flex-direction: column; gap: 16px; }
+.vq-item .vq-q { font-weight: 600; font-size: 15px; margin-bottom: 10px; }
+.vq-item .q-num { color: var(--accent-bright); font-family: var(--font-heading); }
 .lesson-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 30px; padding-top: 22px; border-top: 1px solid var(--border); }
+
+/* ---------- chips (leaderboard filter, subject jump) ---------- */
+.chip {
+  display: inline-flex; align-items: center; gap: 7px; padding: 8px 14px;
+  border-radius: 999px; border: 1px solid var(--border); background: var(--surface);
+  color: var(--fg-muted); font-family: var(--font-body); font-size: 13.5px; font-weight: 600;
+  cursor: pointer; text-decoration: none; white-space: nowrap;
+  transition: border-color 200ms var(--ease), color 200ms var(--ease), background 200ms var(--ease);
+}
+.chip svg { width: 14px; height: 14px; stroke: currentColor; flex: none; }
+.chip:hover { border-color: var(--border-strong); color: var(--fg); }
+.chip.active { background: rgba(214, 179, 106, 0.16); border-color: rgba(232, 198, 127, 0.4); color: var(--accent-bright); }
+
+/* ---------- leaderboard ---------- */
+.lb-filter { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 22px; }
+.lb-podium {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; align-items: end;
+  margin-bottom: 24px; max-width: 620px;
+}
+.lb-pod {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center;
+  padding: 20px 14px; border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--surface); position: relative;
+}
+.lb-pod-1 { padding-top: 30px; border-color: rgba(232, 198, 127, 0.5); box-shadow: 0 0 26px rgba(214, 179, 106, 0.22); }
+.lb-pod-2 { padding-top: 16px; }
+.lb-pod-3 { padding-top: 10px; }
+.lb-pod.you { border-color: var(--accent); }
+.lb-pod .lb-medal { font-size: 30px; line-height: 1; }
+.lb-pod .lb-avatar { width: 46px; height: 46px; font-size: 18px; }
+.lb-pod strong { font-size: 14.5px; font-family: var(--font-heading); }
+.lb-pod .lb-xp { font-family: var(--font-accent); font-weight: 800; color: var(--accent-bright); font-size: 16px; }
+.lb-pod .lb-badges { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; color: var(--fg-muted); }
+.lb-pod .lb-badges svg { width: 13px; height: 13px; stroke: currentColor; }
+.lb-table .lb-rankcell { font-size: 16px; }
+.lb-rank-num { color: var(--fg-faint); font-weight: 700; }
+.lb-table td svg { width: 14px; height: 14px; stroke: currentColor; vertical-align: -2px; }
+tr.lb-you td { background: rgba(214, 179, 106, 0.08); }
+tr.lb-you .t-strong { color: var(--accent-bright); }
+
+/* ---------- subject sections on Explore ---------- */
+.subject-jump { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 24px; }
+.subject-jump .chip svg { width: 14px; height: 14px; }
+.subject-section { margin-bottom: 40px; scroll-margin-top: 80px; }
+.subject-section-head { display: flex; align-items: center; gap: 18px; margin-bottom: 16px; }
+.subject-section-head .cl-thumb { width: 64px; height: 64px; flex: none; }
+.subject-section-head .cl-thumb.sm { width: 64px; }
+.subject-section-head .ss-info { flex: 1; min-width: 0; }
+.subject-section-head h2 { font-size: 21px; margin-bottom: 4px; }
+.subject-section-head .ss-info p { color: var(--fg-muted); font-size: 14px; max-width: 62ch; margin-bottom: 8px; }
+.subject-section-head .meta { display: flex; gap: 14px; color: var(--fg-faint); font-size: 13px; flex-wrap: wrap; }
+.subject-section-head .meta span { display: inline-flex; align-items: center; gap: 5px; }
+.subject-section-head .meta svg { width: 14px; height: 14px; stroke: currentColor; }
+.subject-section-head .ss-path { flex: none; align-self: flex-start; }
 
 /* ---------- lesson exercise blocks ---------- */
 .block-ex {
@@ -1149,6 +1221,14 @@ mark.hl { background: rgba(251, 191, 36, 0.25); color: inherit; border-radius: 3
   .side-link { white-space: nowrap; width: auto; }
   .admin-main { padding: 26px 20px 70px; }
 }
+@media (max-width: 900px) {
+  /* subject sections stack their header on tablet/phone so the thumbnail,
+     copy and CTA never crowd each other */
+  .subject-section-head { flex-wrap: wrap; gap: 12px 14px; align-items: flex-start; }
+  .subject-section-head .cl-thumb, .subject-section-head .cl-thumb.sm { width: 48px; height: 48px; }
+  .subject-section-head .ss-info { flex-basis: calc(100% - 62px); }
+  .subject-section-head .ss-path { margin-left: 62px; }
+}
 @media (max-width: 640px) {
   .container { padding: 26px 18px 70px; }
   .topbar { padding: 12px 14px; gap: 10px; }
@@ -1160,4 +1240,15 @@ mark.hl { background: rgba(251, 191, 36, 0.25); color: inherit; border-radius: 3
   .user-chip .user-name { display: none; }
   .admin-learner-link { display: none; }
   .user-chip #logout-btn { padding: 5px 10px; font-size: 13px; }
+  /* video fills the panel edge-to-edge and never exceeds the viewport height */
+  .video-frame { border-radius: var(--radius-sm); max-height: 60vh; }
+  .lb-podium { gap: 8px; }
+  .lb-pod { padding: 14px 8px; }
+  .lb-pod-1 { padding-top: 20px; }
+  .lb-pod .lb-avatar { width: 38px; height: 38px; font-size: 15px; }
+  .lb-pod strong { font-size: 12.5px; }
+  .lb-pod .lb-medal { font-size: 24px; }
+  .subject-section-head h2 { font-size: 18px; }
+  .subject-section-head .ss-info p { font-size: 13px; }
+  .bottomnav a { font-size: 10.5px; }
 }

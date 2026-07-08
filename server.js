@@ -648,6 +648,115 @@ route('POST', '/api/tutor', async (req, res, _p, user) => {
   send(res, 200, { configured: true, reply: 'Tutor backend is configured but not yet wired to a model.' });
 }, { auth: true });
 
+// ----- leaderboard -----
+// Every published module id that belongs to a subject (module → track → subject),
+// so XP can be scoped to a single subject's activity.
+function subjectModuleIds(subjectId) {
+  return db.prepare(`
+    SELECT m.id FROM modules m
+    JOIN tracks t ON t.id = m.track_id
+    WHERE t.subject_id = ?`).all(subjectId).map((r) => r.id);
+}
+function badgeCount(userId) {
+  return userBadges(userId).filter((b) => b.earned).length;
+}
+route('GET', '/api/leaderboard', async (req, res, _p, user) => {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const subjectId = Number(url.searchParams.get('subject')) || null;
+  const subjectsList = db.prepare('SELECT id, title FROM subjects WHERE published = 1 ORDER BY position, id').all();
+
+  // Learners + leaders compete; staff/admins are excluded from the board.
+  const people = db.prepare("SELECT id, name FROM users WHERE role IN ('learner','leader')").all();
+  let scoped = null;
+  if (subjectId) {
+    const ids = subjectModuleIds(subjectId);
+    scoped = new Set(ids);
+  }
+  const rows = people.map((u) => {
+    let xp;
+    if (scoped) {
+      if (scoped.size === 0) xp = 0;
+      else {
+        const placeholders = [...scoped].map(() => '?').join(',');
+        xp = db.prepare(`SELECT COALESCE(SUM(xp),0) AS s FROM activity_events WHERE user_id = ? AND module_id IN (${placeholders})`).get(u.id, ...scoped).s;
+      }
+    } else {
+      xp = userXp(u.id);
+    }
+    return { id: u.id, name: u.name, xp, badges: badgeCount(u.id), level: levelInfo(xp).level, you: u.id === user.id };
+  }).filter((r) => r.xp > 0 || r.you);
+  rows.sort((a, b) => b.xp - a.xp || b.badges - a.badges || a.name.localeCompare(b.name));
+  rows.forEach((r, i) => { r.rank = i + 1; });
+  send(res, 200, { subjects: subjectsList, subjectId, leaderboard: rows.slice(0, 100) });
+}, { auth: true });
+
+// ----- group leader -----
+// A leader is a learner who also runs a cohort: they add learners to their
+// group and watch that group's progress within one subject. Their group is
+// created lazily so becoming a leader needs no extra setup step.
+function ensureLeaderGroup(user) {
+  let g = db.prepare('SELECT * FROM groups WHERE leader_id = ? ORDER BY id LIMIT 1').get(user.id);
+  if (!g) {
+    const id = Number(db.prepare('INSERT INTO groups (name, leader_id) VALUES (?, ?)').run(`${user.name}'s Group`, user.id).lastInsertRowid);
+    g = db.prepare('SELECT * FROM groups WHERE id = ?').get(id);
+  }
+  return g;
+}
+function memberSubjectProgress(userId, subjectId) {
+  const ids = subjectId ? subjectModuleIds(subjectId) : db.prepare('SELECT id FROM modules').all().map((r) => r.id);
+  if (!ids.length) return { xp: 0, lessonsDone: 0, modulesDone: 0, modulesTotal: 0 };
+  const ph = ids.map(() => '?').join(',');
+  const xp = db.prepare(`SELECT COALESCE(SUM(xp),0) AS s FROM activity_events WHERE user_id = ? AND module_id IN (${ph})`).get(userId, ...ids).s;
+  const lessonsDone = db.prepare(`SELECT COUNT(*) AS c FROM lesson_progress lp JOIN lessons l ON l.id = lp.lesson_id WHERE lp.user_id = ? AND l.module_id IN (${ph})`).get(userId, ...ids).c;
+  const modulesDone = db.prepare(`SELECT COUNT(*) AS c FROM module_completions WHERE user_id = ? AND module_id IN (${ph})`).get(userId, ...ids).c;
+  return { xp, lessonsDone, modulesDone, modulesTotal: ids.length };
+}
+route('GET', '/api/leader/overview', async (req, res, _p, user) => {
+  const group = ensureLeaderGroup(user);
+  const subjects = db.prepare('SELECT id, title FROM subjects WHERE published = 1 ORDER BY position, id').all();
+  const members = db.prepare(`
+    SELECT u.id, u.name, u.email, gm.joined_at FROM group_members gm
+    JOIN users u ON u.id = gm.user_id WHERE gm.group_id = ? ORDER BY u.name`).all(group.id)
+    .map((m) => ({ ...m, ...memberSubjectProgress(m.id, group.subject_id), badges: badgeCount(m.id) }));
+  send(res, 200, { group, subjects, members });
+}, { leader: true });
+
+route('PUT', '/api/leader/group', async (req, res, _p, user) => {
+  const group = ensureLeaderGroup(user);
+  const b = await readBody(req);
+  const name = (b.name || '').trim() || group.name;
+  const subjectId = b.subject_id ? Number(b.subject_id) : null;
+  if (subjectId && !db.prepare('SELECT 1 AS x FROM subjects WHERE id = ?').get(subjectId)) return send(res, 400, { error: 'Unknown subject.' });
+  db.prepare('UPDATE groups SET name = ?, subject_id = ? WHERE id = ?').run(name, subjectId, group.id);
+  send(res, 200, { ok: true });
+}, { leader: true });
+
+route('POST', '/api/leader/members', async (req, res, _p, user) => {
+  const group = ensureLeaderGroup(user);
+  const b = await readBody(req);
+  const email = (b.email || '').trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return send(res, 400, { error: 'Enter a valid email address.' });
+  let target = db.prepare('SELECT id, role FROM users WHERE email = ?').get(email);
+  if (!target) {
+    // create the learner on the spot with a temporary password the leader shares
+    const name = (b.name || '').trim() || email.split('@')[0];
+    const tempPass = b.password && b.password.length >= 6 ? b.password : crypto.randomBytes(5).toString('hex');
+    const id = createUser(name, email, tempPass, 'learner');
+    target = { id, role: 'learner' };
+    db.prepare('INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)').run(group.id, id);
+    return send(res, 200, { ok: true, created: true, tempPassword: b.password ? undefined : tempPass, name });
+  }
+  if (target.role === 'admin' || target.role === 'teacher') return send(res, 400, { error: "That account is staff and can't be added as a group member." });
+  const r = db.prepare('INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)').run(group.id, target.id);
+  send(res, 200, { ok: true, created: false, already: r.changes === 0 });
+}, { leader: true });
+
+route('DELETE', '/api/leader/members/:id', async (req, res, p, user) => {
+  const group = ensureLeaderGroup(user);
+  db.prepare('DELETE FROM group_members WHERE group_id = ? AND user_id = ?').run(group.id, p.id);
+  send(res, 200, { ok: true });
+}, { leader: true });
+
 // ----- admin -----
 route('GET', '/api/admin/overview', async (req, res, _p, user) => {
   const learners = db.prepare("SELECT COUNT(*) AS c FROM users WHERE role = 'learner'").get().c;
@@ -929,6 +1038,16 @@ function validateBlocks(blocks) {
     if (bl.type === 'order' && (!Array.isArray(bl.items) || bl.items.length < 2)) return 'Ordering blocks need at least 2 items.';
     if (bl.type === 'match' && (!Array.isArray(bl.pairs) || bl.pairs.length < 2)) return 'Matching blocks need at least 2 pairs.';
     if (bl.type === 'blank' && !/\{\{.+?\}\}/.test(bl.text || '')) return 'Fill-in-the-blank blocks need at least one {{answer}} placeholder.';
+    if (bl.type === 'video') {
+      // summary (optional string) and quiz (optional MCQ array) travel with the video
+      if (bl.quiz != null) {
+        if (!Array.isArray(bl.quiz)) return 'Video quiz must be a list of questions.';
+        for (const q of bl.quiz) {
+          if (!q.q || !Array.isArray(q.options) || q.options.length < 2) return 'Each video quiz question needs text and at least 2 options.';
+          if (typeof q.correct_index !== 'number' || q.correct_index < 0 || q.correct_index >= q.options.length) return 'Each video quiz question needs a valid correct answer.';
+        }
+      }
+    }
   }
   return null;
 }
@@ -1358,7 +1477,7 @@ route('GET', '/api/admin/users', async (req, res) => {
 
 route('PUT', '/api/admin/users/:id/role', async (req, res, p, user) => {
   const b = await readBody(req);
-  if (!['learner', 'teacher', 'admin'].includes(b.role)) return send(res, 400, { error: 'Role must be learner, teacher, or admin.' });
+  if (!['learner', 'leader', 'teacher', 'admin'].includes(b.role)) return send(res, 400, { error: 'Role must be learner, leader, teacher, or admin.' });
   const target = db.prepare('SELECT id FROM users WHERE id = ?').get(p.id);
   if (!target) return send(res, 404, { error: 'User not found.' });
   if (Number(p.id) === user.id && b.role !== 'admin') return send(res, 400, { error: "You can't remove your own admin access." });
@@ -1366,6 +1485,39 @@ route('PUT', '/api/admin/users/:id/role', async (req, res, p, user) => {
   db.prepare('UPDATE users SET role = ?, designation = ?, content_scope = ?, can_view_analytics = ? WHERE id = ?')
     .run(b.role, (b.designation || '').trim() || null, contentScope, b.can_view_analytics ? 1 : 0, p.id);
   send(res, 200, { ok: true });
+}, { admin: true });
+
+// Bulk-create accounts from a pasted CSV / spreadsheet. Columns are matched by
+// header synonyms so exports from anywhere work; name + email are required,
+// password + role optional (a random password is generated when omitted).
+route('POST', '/api/admin/users/import', async (req, res) => {
+  const b = await readBody(req, 4e6);
+  let rows;
+  try {
+    rows = Array.isArray(b.rows) ? b.rows : parseCSV(String(b.csv || ''));
+  } catch { return send(res, 400, { error: 'Could not read that CSV.' }); }
+  const { objects } = tableToObjects(rows);
+  if (!objects.length) return send(res, 400, { error: 'No rows found. Include a header row (name, email) plus at least one person.' });
+  const pick = (o, keys) => { for (const k of keys) if (o[k]) return o[k]; return ''; };
+  const created = [];
+  const errors = [];
+  for (let i = 0; i < objects.length; i++) {
+    const o = objects[i];
+    const name = pick(o, ['name', 'full name', 'fullname', 'learner', 'student']).trim();
+    const email = pick(o, ['email', 'e-mail', 'mail', 'address']).trim().toLowerCase();
+    let role = pick(o, ['role', 'type']).trim().toLowerCase() || 'learner';
+    if (!['learner', 'leader', 'teacher', 'admin'].includes(role)) role = 'learner';
+    const password = pick(o, ['password', 'pass', 'pwd']).trim();
+    if (!name || !email) { errors.push(`Row ${i + 2}: name and email are required.`); continue; }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { errors.push(`Row ${i + 2}: "${email}" is not a valid email.`); continue; }
+    if (db.prepare('SELECT 1 AS x FROM users WHERE email = ?').get(email)) { errors.push(`Row ${i + 2}: ${email} already exists — skipped.`); continue; }
+    const finalPass = password.length >= 6 ? password : crypto.randomBytes(5).toString('hex');
+    try {
+      createUser(name, email, finalPass, role);
+      created.push({ name, email, role, password: password.length >= 6 ? undefined : finalPass });
+    } catch (e) { errors.push(`Row ${i + 2}: could not create ${email}.`); }
+  }
+  send(res, 200, { imported: created.length, created, skipped: errors.length, details: errors.slice(0, 20) });
 }, { admin: true });
 
 route('GET', '/api/admin/users/:id', async (req, res, p) => {
@@ -1419,6 +1571,7 @@ async function handleRequest(req, res) {
         if ((r.auth || r.admin || r.staff) && !user) return send(res, 401, { error: 'Please sign in.' });
         if (r.admin && user.role !== 'admin') return send(res, 403, { error: 'Admin access required.' });
         if (r.staff && user.role !== 'admin' && user.role !== 'teacher') return send(res, 403, { error: 'Teacher or admin access required.' });
+        if (r.leader && user.role !== 'admin' && user.role !== 'leader') return send(res, 403, { error: 'Group leader access required.' });
         return await r.handler(req, res, params, user);
       } catch (e) {
         console.error(e);
