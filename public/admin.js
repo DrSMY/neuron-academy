@@ -1209,7 +1209,7 @@ function userImportModal() {
 async function renderUsers() {
   app.innerHTML = shell('<div class="skeleton" style="min-height:300px"></div>');
   bindShell();
-  const [{ users }, { all: currencies }] = await Promise.all([api('/api/admin/users'), api('/api/currency')]);
+  const [{ users }, { all: currencies }, { resets }] = await Promise.all([api('/api/admin/users'), api('/api/currency'), api('/api/admin/resets')]);
   const roleBadge = (u) => u.role === 'admin' ? '<span class="badge ready">Admin</span>'
     : u.role === 'teacher' ? `<span class="badge completed">${icon('sparkle')} Teacher</span>`
     : u.role === 'leader' ? `<span class="badge level">${icon('users')} Leader</span>` : 'Learner';
@@ -1219,6 +1219,18 @@ async function renderUsers() {
       <p>Click a user to set custom per-module prices, grant free access, or override the sequential lock. Use <strong>Role</strong> to grant teacher, group-leader, or admin privileges.</p></div>
       <button class="btn btn-primary" id="import-users">${icon('upload')} Import users</button>
     </div>
+    ${resets.length ? `
+    <div class="card editor-block" style="margin-bottom:20px;border-color:rgba(251,191,36,0.35)">
+      <h4 style="font-size:14.5px;margin-bottom:4px;display:flex;align-items:center;gap:8px"><span style="display:inline-flex;width:16px;height:16px;color:var(--warning)">${icon('alert')}</span> Password reset requests</h4>
+      <p class="drag-hint" style="margin-bottom:10px">These people used “Forgot password”. Read them their one-time code — it works on the sign-in page for 24 hours.</p>
+      ${resets.map((r) => `
+      <div class="track-row">
+        <span class="track-row-title">${esc(r.name)}</span>
+        <span class="drag-hint">${esc(r.email)}</span>
+        <span style="flex:1"></span>
+        <code style="font-family:monospace;font-size:14px;color:var(--accent-bright);letter-spacing:0.06em">${esc(r.code)}</code>
+      </div>`).join('')}
+    </div>` : ''}
     <div class="card editor-block" style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:20px">
       <div style="flex:1;min-width:200px">
         <h4 style="font-size:14.5px;margin-bottom:2px">Platform currency</h4>

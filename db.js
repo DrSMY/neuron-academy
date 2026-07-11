@@ -194,6 +194,13 @@ CREATE TABLE IF NOT EXISTS group_members (
   joined_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (group_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS password_resets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code TEXT NOT NULL,
+  used INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `);
 
 // All prices are stored in USD; the active currency only controls how
@@ -450,4 +457,9 @@ deriveFlashcards();
 migrateTaxonomy();
 seedCurrencies();
 
-module.exports = { db, createUser, verifyPassword };
+function setPassword(userId, password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  db.prepare('UPDATE users SET pass_hash = ?, salt = ? WHERE id = ?').run(hashPassword(password, salt), salt, userId);
+}
+
+module.exports = { db, createUser, verifyPassword, setPassword };

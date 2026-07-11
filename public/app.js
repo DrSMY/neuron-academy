@@ -157,7 +157,7 @@ function shell(active, content) {
         <span class="spacer"></span>
         ${themeBtnHTML()}
         <span class="streak-chip ${meStats?.activeToday ? 'lit' : ''}" id="streak-chip" title="${streak} day learning streak">${icon('flame')}<span>${streak}</span></span>
-        <span class="user-chip"><span class="user-name">${esc(me.name)}</span><span class="avatar" aria-hidden="true">${esc(initial)}</span></span>
+        <button class="user-chip" id="profile-btn" title="Profile & password"><span class="user-name">${esc(me.name)}</span><span class="avatar" aria-hidden="true">${esc(initial)}</span></button>
       </header>
       <main class="container">${content}</main>
     </div>
@@ -185,7 +185,53 @@ function bindShell() {
   if (search) search.onclick = () => palette.open();
   const themeBtn = $('#theme-btn');
   if (themeBtn) themeBtn.onclick = () => toggleTheme(themeBtn);
+  const profileBtn = $('#profile-btn');
+  if (profileBtn) profileBtn.onclick = () => openProfileModal();
   bindLogoReplay();
+}
+
+// ---------- profile & password ----------
+function openProfileModal() {
+  openModal(`
+    <div class="modal-head">
+      <div><h3>Your account</h3><div class="sub">${esc(me.email)}</div></div>
+      <button class="icon-btn" data-close aria-label="Close">${icon('x')}</button>
+    </div>
+    <form id="profile-form">
+      <div class="field"><label>Display name</label><input name="name" value="${esc(me.name)}" required minlength="2"></div>
+      <button class="btn btn-ghost" type="submit" style="width:100%">Save name</button>
+    </form>
+    <div style="border-top:1px solid var(--border);margin:22px 0 18px"></div>
+    <form id="password-form">
+      <div class="field"><label>Current password</label><input name="current" type="password" autocomplete="current-password" required></div>
+      <div class="row-2">
+        <div class="field"><label>New password</label><input name="next" type="password" autocomplete="new-password" minlength="6" required></div>
+        <div class="field"><label>Repeat new password</label><input name="again" type="password" autocomplete="new-password" minlength="6" required></div>
+      </div>
+      <button class="btn btn-primary" type="submit" style="width:100%">Change password</button>
+    </form>`);
+
+  $('#profile-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const name = new FormData(e.target).get('name').trim();
+    try {
+      await api('/api/me/profile', { method: 'PUT', body: { name } });
+      me.name = name;
+      toast('Name updated.');
+      closeModal();
+      render();
+    } catch (err) { toast(err.message, 'error'); }
+  };
+  $('#password-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    if (fd.get('next') !== fd.get('again')) { toast("The new passwords don't match.", 'error'); return; }
+    try {
+      await api('/api/me/password', { method: 'PUT', body: { current: fd.get('current'), next: fd.get('next') } });
+      toast('Password changed.');
+      closeModal();
+    } catch (err) { toast(err.message, 'error'); }
+  };
 }
 function bindLogoReplay() {
   document.querySelectorAll('.brand .logo').forEach((logo) => {
@@ -206,6 +252,19 @@ function renderAuth(mode = 'login') {
         <button role="tab" class="${mode === 'signup' ? 'active' : ''}" data-mode="signup">Create account</button>
       </div>
       <div class="form-error" id="auth-error">${icon('alert')}<span></span></div>
+      ${mode === 'forgot' ? `
+      <form id="forgot-form" novalidate>
+        <div class="field">
+          <label for="fp-email">Your account email <span class="req">*</span></label>
+          <input id="fp-email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+        </div>
+        <button class="btn btn-ghost" style="width:100%" type="submit">Request a reset code</button>
+        <div class="hint" style="margin:10px 0 18px" id="forgot-note">A one-time code is created for your account — your platform admin or group leader reads it out to you. Already have it? Enter it below.</div>
+        <div class="field"><label for="fp-code">Reset code</label><input id="fp-code" name="code" placeholder="e.g. 3fa92c1b" autocomplete="off"></div>
+        <div class="field"><label for="fp-pass">New password</label><input id="fp-pass" name="password" type="password" autocomplete="new-password" minlength="6"></div>
+        <button class="btn btn-primary" style="width:100%" type="button" id="do-reset">Set new password ${icon('arrowRight')}</button>
+      </form>
+      <p class="auth-note"><a href="#" id="back-login" style="color:var(--accent-bright)">← Back to sign in</a></p>` : `
       <form id="auth-form" novalidate>
         ${mode === 'signup' ? `
         <div class="field">
@@ -224,8 +283,11 @@ function renderAuth(mode = 'login') {
         <button class="btn btn-primary" style="width:100%" type="submit">
           ${mode === 'login' ? 'Sign in' : 'Start learning'} ${icon('arrowRight')}
         </button>
+        ${mode === 'login' ? `<p class="auth-note" style="margin-top:12px"><a href="#" id="forgot-link" style="color:var(--accent-bright)">Forgot password?</a></p>` : ''}
       </form>
-      <p class="auth-note">Demo admin: admin@platform.ai / admin123</p>
+      <div class="auth-divider"><span>or</span></div>
+      <div id="google-signin"></div>
+      <p class="auth-note">Demo admin: admin@platform.ai / admin123</p>`}
     </div>
   </div>`;
 
@@ -235,6 +297,39 @@ function renderAuth(mode = 'login') {
   const authThemeBtn = $('#theme-btn');
   if (authThemeBtn) authThemeBtn.onclick = () => toggleTheme(authThemeBtn);
   bindLogoReplay();
+
+  if (mode === 'forgot') {
+    $('#back-login').onclick = (e) => { e.preventDefault(); renderAuth('login'); };
+    $('#forgot-form').onsubmit = async (e) => {
+      e.preventDefault();
+      const email = $('#fp-email').value.trim();
+      if (!email) { toast('Enter your email first.', 'error'); return; }
+      try {
+        const r = await api('/api/auth/forgot', { method: 'POST', body: { email } });
+        $('#forgot-note').textContent = r.message;
+        toast('Reset code requested.');
+      } catch (err) { toast(err.message, 'error'); }
+    };
+    $('#do-reset').onclick = async () => {
+      const errBox = $('#auth-error');
+      errBox.classList.remove('show');
+      try {
+        await api('/api/auth/reset', { method: 'POST', body: { email: $('#fp-email').value.trim(), code: $('#fp-code').value.trim(), password: $('#fp-pass').value } });
+        toast('Password updated — sign in with it now.');
+        renderAuth('login');
+      } catch (err) {
+        errBox.querySelector('span').textContent = err.message;
+        errBox.classList.add('show');
+      }
+    };
+    return;
+  }
+
+  if (mode === 'login') {
+    const fl = $('#forgot-link');
+    if (fl) fl.onclick = (e) => { e.preventDefault(); renderAuth('forgot'); };
+  }
+  mountGoogleButton();
 
   $('#auth-form').onsubmit = async (e) => {
     e.preventDefault();
@@ -260,6 +355,42 @@ function renderAuth(mode = 'login') {
       btn.innerHTML = `${mode === 'login' ? 'Sign in' : 'Start learning'} ${icon('arrowRight')}`;
     }
   };
+}
+
+// ---------- Google sign-in ----------
+let authConfig = null;
+async function mountGoogleButton() {
+  const slot = $('#google-signin');
+  if (!slot) return;
+  try { authConfig = authConfig || await api('/api/auth/config'); } catch { authConfig = { googleClientId: null }; }
+  if (!authConfig.googleClientId) {
+    // Visible but honest: works the moment the admin sets GOOGLE_CLIENT_ID.
+    slot.innerHTML = `<button class="btn btn-ghost g-btn" type="button" id="g-disabled">
+      <svg viewBox="0 0 24 24" width="17" height="17"><path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.4H12v4.6h6.5a5.6 5.6 0 0 1-2.4 3.6v3h3.9c2.3-2.1 3.5-5.2 3.5-8.8z"/><path fill="#34A853" d="M12 24c3.2 0 6-1 8-2.9l-3.9-3a7.2 7.2 0 0 1-10.8-3.8H1.2v3A12 12 0 0 0 12 24z"/><path fill="#FBBC05" d="M5.3 14.3a7.2 7.2 0 0 1 0-4.6v-3H1.2a12 12 0 0 0 0 10.7l4.1-3.1z"/><path fill="#EA4335" d="M12 4.7c1.8 0 3.4.6 4.6 1.8l3.4-3.4A12 12 0 0 0 1.2 6.6l4.1 3.1A7.2 7.2 0 0 1 12 4.7z"/></svg>
+      Continue with Google</button>`;
+    $('#g-disabled').onclick = () => toast('Google sign-in needs setup: the admin adds a GOOGLE_CLIENT_ID environment variable on the server.', 'error');
+    return;
+  }
+  const renderIt = () => {
+    window.google.accounts.id.initialize({
+      client_id: authConfig.googleClientId,
+      callback: async (resp) => {
+        try {
+          await api('/api/auth/google', { method: 'POST', body: { credential: resp.credential } });
+          await refreshMe();
+          location.hash = '#/catalog';
+          render();
+        } catch (err) { toast(err.message, 'error'); }
+      },
+    });
+    window.google.accounts.id.renderButton(slot, { theme: 'outline', size: 'large', width: 320, text: 'continue_with' });
+  };
+  if (window.google?.accounts?.id) { renderIt(); return; }
+  const s = document.createElement('script');
+  s.src = 'https://accounts.google.com/gsi/client';
+  s.async = true;
+  s.onload = renderIt;
+  document.head.appendChild(s);
 }
 
 // ---------- catalog ----------
@@ -637,7 +768,31 @@ function drawAssignment() {
 }
 
 // ---------- lesson blocks ----------
-const exState = { solved: new Set(), interactive: 0 };
+const exState = { solved: new Set(), interactive: 0, wrong: {} };
+
+// Struggling is part of learning: one wrong try earns a hint, three unlock a
+// full reveal (which still counts as done — the goal is progress, not stuck).
+function registerWrong(bi, hintText) {
+  exState.wrong[bi] = (exState.wrong[bi] || 0) + 1;
+  const n = exState.wrong[bi];
+  const help = document.querySelector(`[data-help="${bi}"]`);
+  if (help && n >= 1 && hintText) {
+    help.hidden = false;
+    help.innerHTML = `${icon('info')} <span>${esc(hintText)}</span>`;
+  }
+  const reveal = document.querySelector(`[data-reveal="${bi}"]`);
+  if (reveal && n >= 3) {
+    reveal.hidden = false;
+    reveal.disabled = false;
+    reveal.title = '';
+    reveal.innerHTML = `${icon('unlock')} Reveal answers`;
+  } else if (reveal && n >= 1) {
+    reveal.hidden = false;
+    reveal.disabled = true;
+    reveal.title = `Unlocks after 3 tries (${n}/3)`;
+    reveal.innerHTML = `${icon('unlock')} Reveal answers (${n}/3 tries)`;
+  }
+}
 
 function shuffled(arr) {
   const a = arr.map((v, i) => ({ v, i }));
@@ -656,6 +811,10 @@ function blockShellHTML(bi, label, prompt, inner) {
     <div class="ex-head">${icon('sparkle')}<span>${esc(label)}</span><span class="ex-status" data-status="${bi}"></span></div>
     ${prompt ? `<p class="ex-prompt">${esc(prompt)}</p>` : ''}
     ${inner}
+    <div class="ex-help" data-help="${bi}" hidden></div>
+    <div class="ex-actions" style="margin-top:10px">
+      <button class="btn btn-ghost btn-sm ex-reveal" data-reveal="${bi}" hidden disabled>${icon('unlock')} Reveal answers</button>
+    </div>
   </section>`;
 }
 
@@ -800,6 +959,7 @@ function bindBlocks(lesson) {
           markSolved(bi, want ? 'Output matches' : 'Ran successfully');
         } else {
           out.className = 'code-out';
+          registerWrong(bi, `Your output and the goal output differ — compare them character by character.`);
           toast('Not the goal output yet — keep tweaking.', 'error');
         }
       });
@@ -836,6 +996,8 @@ function bindBlocks(lesson) {
       } else {
         list.classList.add('shake');
         setTimeout(() => list.classList.remove('shake'), 450);
+        const right = order.filter((v, i) => v === i).length;
+        registerWrong(bi, `${right} of ${order.length} item${right === 1 ? ' is' : 's are'} already in the correct position.`);
         toast('Not quite — try a different order.', 'error');
       }
     };
@@ -864,6 +1026,10 @@ function bindBlocks(lesson) {
           } else {
             chip.classList.add('wrong');
             setTimeout(() => chip.classList.remove('wrong'), 450);
+            const pairs = lesson.blocks[bi].pairs || [];
+            const unmatchedL = grid.querySelector('[data-l]:not(.correct)');
+            const pair = unmatchedL ? pairs[Number(unmatchedL.dataset.l)] : null;
+            registerWrong(bi, pair ? `Hint: “${pair.l}” goes with “${pair.r}”.` : 'Take another look at the pairs.');
           }
         }
       };
@@ -885,7 +1051,12 @@ function bindBlocks(lesson) {
         panel.querySelectorAll(`[data-blank-of="${bi}"]`).forEach((inp) => { inp.disabled = true; });
         btn.disabled = true;
         markSolved(bi);
-      } else toast('Some blanks are not right yet.', 'error');
+      } else {
+        const firsts = [...panel.querySelectorAll(`[data-blank-of="${bi}"].wrong`)]
+          .map((inp) => { const a = inp.dataset.answers.split('|')[0].trim(); return `${a.charAt(0).toUpperCase()}… (${a.length} letters)`; });
+        registerWrong(bi, firsts.length ? `Hint — starts with: ${firsts.join(', ')}.` : 'Almost there.');
+        toast('Some blanks are not right yet.', 'error');
+      }
     };
   });
 
@@ -908,7 +1079,56 @@ function bindBlocks(lesson) {
         panel.querySelectorAll(`[data-vquiz="${bi}"] input`).forEach((inp) => { inp.disabled = true; });
         btn.disabled = true;
         markSolved(bi, 'Quiz passed');
-      } else toast('Not quite — review the video and try again.', 'error');
+      } else {
+        const firstWrong = b.quiz.findIndex((q, qi) => {
+          const picked = panel.querySelector(`[data-vquiz="${bi}"] [data-vq="${qi}"] input:checked`);
+          return !picked || Number(picked.value) !== q.correct_index;
+        });
+        registerWrong(bi, `Recheck question ${firstWrong + 1} — rewatch the part of the video that covers it.`);
+        toast('Not quite — review the video and try again.', 'error');
+      }
+    };
+  });
+
+  // reveal answers (unlocked after 3 wrong tries on a block)
+  panel.querySelectorAll('[data-reveal]').forEach((btn) => {
+    const bi = Number(btn.dataset.reveal);
+    const b = lesson.blocks[bi];
+    btn.onclick = () => {
+      if (btn.disabled) return;
+      if (b.type === 'order') {
+        const list = panel.querySelector(`[data-order="${bi}"]`);
+        [...list.querySelectorAll('.order-item')]
+          .sort((x, y) => Number(x.dataset.oi) - Number(y.dataset.oi))
+          .forEach((el) => { list.appendChild(el); el.classList.add('correct'); el.draggable = false; });
+        const chk = panel.querySelector(`[data-check-order="${bi}"]`);
+        if (chk) chk.disabled = true;
+      } else if (b.type === 'match') {
+        panel.querySelectorAll(`[data-match="${bi}"] .match-chip`).forEach((c) => { c.classList.remove('selected', 'wrong'); c.classList.add('correct'); });
+      } else if (b.type === 'blank') {
+        panel.querySelectorAll(`[data-blank-of="${bi}"]`).forEach((inp) => {
+          inp.value = inp.dataset.answers.split('|')[0].trim();
+          inp.classList.remove('wrong');
+          inp.classList.add('correct');
+          inp.disabled = true;
+        });
+        const chk = panel.querySelector(`[data-check-blank="${bi}"]`);
+        if (chk) chk.disabled = true;
+      } else if (b.type === 'video') {
+        b.quiz.forEach((q, qi) => {
+          const item = panel.querySelector(`[data-vquiz="${bi}"] [data-vq="${qi}"]`);
+          item.querySelectorAll('.quiz-opt').forEach((o) => o.classList.remove('wrong'));
+          const correct = item.querySelector(`input[value="${q.correct_index}"]`);
+          if (correct) { correct.checked = true; correct.closest('.quiz-opt').classList.add('correct'); }
+          item.querySelectorAll('input').forEach((i) => { i.disabled = true; });
+        });
+        const chk = panel.querySelector(`[data-check-vquiz="${bi}"]`);
+        if (chk) chk.disabled = true;
+      }
+      btn.hidden = true;
+      const help = panel.querySelector(`[data-help="${bi}"]`);
+      if (help) help.hidden = true;
+      markSolved(bi, 'Revealed');
     };
   });
 }
@@ -1042,6 +1262,7 @@ function drawLesson() {
     : 'Mark complete & continue';
 
   exState.solved = new Set();
+  exState.wrong = {};
   exState.interactive = l.blocks.filter(blockIsInteractive).length;
 
   panel.innerHTML = `
@@ -1365,7 +1586,7 @@ async function renderLeaderboard() {
     <div class="page-head" style="margin-bottom:20px">
       <span class="eyebrow">Compete & climb</span>
       <h1>Leaderboard</h1>
-      <p>Ranked by XP earned, with badges as the tie-breaker. Keep a streak, ace quizzes and finish modules to rise.</p>
+      <p>Everyone with an active lesson is on the board. Points come from lessons, quiz attempts and marks, daily logins, streaks and badges — <strong style="color:var(--accent-bright)">a higher score means more rewards 🎁</strong></p>
     </div>
     <div class="lb-filter">
       <button class="chip ${!lbSubject ? 'active' : ''}" data-subj="">Overall</button>
@@ -1378,25 +1599,29 @@ async function renderLeaderboard() {
           <div class="lb-medal">${rankMedal(p)}</div>
           <div class="avatar lb-avatar">${esc(r.name.trim().charAt(0).toUpperCase())}</div>
           <strong>${esc(r.name)}${r.you ? ' (you)' : ''}</strong>
-          <span class="lb-xp">${r.xp} XP</span>
-          <span class="lb-badges">${icon('trophy')} ${r.badges}</span>
+          <span class="lb-xp">${r.points} pts</span>
+          <span class="lb-badges">${icon('trophy')} ${r.badges} · ${icon('flame')} ${r.streak}</span>
         </div>`;
       }).join('')}
     </div>` : ''}
     <div class="card table-card">
       ${data.leaderboard.length ? `
       <table class="data lb-table">
-        <thead><tr><th>#</th><th>Learner</th><th>Level</th><th>Badges</th><th>XP</th></tr></thead>
+        <thead><tr><th>#</th><th>Learner</th><th>XP</th><th>Quiz tries</th><th>Best mark</th><th>Streak</th><th>Badges</th><th>Points</th></tr></thead>
         <tbody>${data.leaderboard.map((r) => `
           <tr class="${r.you ? 'lb-you' : ''}">
             <td class="num lb-rankcell">${rankMedal(r.rank)}</td>
             <td class="t-strong">${esc(r.name)}${r.you ? ' <span class="badge ready" style="margin-left:6px">You</span>' : ''}</td>
-            <td class="num">${r.level}</td>
+            <td class="num">${r.xp}</td>
+            <td class="num">${r.attempts}</td>
+            <td class="num">${r.bestScore === null ? '—' : r.bestScore + '%'}</td>
+            <td class="num">${icon('flame')} ${r.streak}</td>
             <td class="num">${icon('trophy')} ${r.badges}</td>
-            <td class="num" style="color:var(--accent-bright);font-weight:700">${r.xp}</td>
+            <td class="num" style="color:var(--accent-bright);font-weight:700">${r.points}</td>
           </tr>`).join('')}
         </tbody>
-      </table>` : `<div class="empty">${icon('trophy')}<h3>No ranked learners yet</h3><p>Earn some XP by completing lessons and quizzes to appear here.</p></div>`}
+      </table>
+      <p class="drag-hint" style="padding:10px 22px 14px">Points = XP (lessons, quizzes, daily logins…) + 25 per badge + 10 per streak day.</p>` : `<div class="empty">${icon('trophy')}<h3>No learners yet</h3><p>Enroll in a module to appear on the board — then every lesson, quiz try, login and streak day earns points.</p></div>`}
     </div>`;
 
   document.querySelectorAll('.lb-filter .chip').forEach((b) => {
@@ -1638,7 +1863,10 @@ const palette = {
     } catch { /* palette still works with actions only */ }
     const input = $('#palette-input');
     input.focus();
-    input.oninput = () => this.update(input.value);
+    input.oninput = () => {
+      this.update(input.value);
+      this.deepSearch(input.value);
+    };
     input.onkeydown = (e) => {
       if (e.key === 'ArrowDown') { e.preventDefault(); this.sel = Math.min(this.sel + 1, this.filtered.length - 1); this.paint(); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); this.sel = Math.max(this.sel - 1, 0); this.paint(); }
@@ -1646,7 +1874,27 @@ const palette = {
     };
     this.update('');
   },
-  update(q) {
+  // Server-side deep search: lesson CONTENT matches (with snippets) merged
+  // into the client-side title matches after a short debounce.
+  deepSearch(q) {
+    const norm = q.trim();
+    clearTimeout(this._dsTimer);
+    this._deepResults = this._deepResults || [];
+    if (norm.length < 2) { this._deepResults = []; return; }
+    this._dsTimer = setTimeout(async () => {
+      try {
+        const { results } = await api(`/api/search?q=${encodeURIComponent(norm)}`);
+        if ($('#palette-input')?.value.trim() !== norm) return; // stale response
+        this._deepResults = results.filter((r) => r.type === 'lesson' && r.snippet).map((r) => ({
+          type: 'lesson', title: r.title, hint: r.module_title, snippet: r.snippet,
+          run: () => { location.hash = `#/module/${r.module_id}/lesson/${r.idx}`; },
+        }));
+        this.update(norm, true);
+      } catch { /* deep search is best-effort */ }
+    }, 220);
+  },
+  update(q, keepDeep = false) {
+    if (!keepDeep) this._deepResults = this._deepResults || [];
     const norm = q.trim().toLowerCase();
     const score = (title) => {
       const t = title.toLowerCase();
@@ -1656,22 +1904,24 @@ const palette = {
       for (const ch of norm) { ti = t.indexOf(ch, ti); if (ti === -1) return 0; ti++; }
       return 10;
     };
-    this.filtered = this.items
+    const titleMatches = this.items
       .map((it) => ({ ...it, _s: score(it.title) + (it.type === 'action' ? 0.5 : 0) }))
       .filter((it) => it._s > 0)
-      .sort((a, b) => b._s - a._s)
-      .slice(0, 9);
+      .sort((a, b) => b._s - a._s);
+    // content matches rank below direct title hits but above fuzzy ones
+    const seen = new Set(titleMatches.map((it) => it.type + it.title));
+    const deep = (this._deepResults || []).filter((it) => !seen.has(it.type + it.title));
+    this.filtered = [...titleMatches.filter((it) => it._s >= 50), ...deep, ...titleMatches.filter((it) => it._s < 50)].slice(0, 9);
     this.sel = 0;
     this.paint();
   },
   paint() {
     const list = $('#palette-list');
     if (!list) return;
-    const typeIcon = { action: 'sparkle', module: 'layers' in ICONS ? 'layers' : 'book', lesson: 'book' };
     list.innerHTML = this.filtered.length ? this.filtered.map((it, i) => `
-      <li class="${i === this.sel ? 'active' : ''}" data-pi="${i}">
-        ${icon(it.type === 'action' ? 'sparkle' : it.type === 'module' ? 'logo' : 'book')}
-        <span class="p-title">${esc(it.title)}</span>
+      <li class="${i === this.sel ? 'active' : ''} ${it.snippet ? 'has-snippet' : ''}" data-pi="${i}">
+        ${icon(it.type === 'action' ? 'sparkle' : it.type === 'module' ? 'layers' : 'book')}
+        <span class="p-title">${esc(it.title)}${it.snippet ? `<small class="p-snippet">${esc(it.snippet)}</small>` : ''}</span>
         <span class="p-hint">${esc(it.hint || '')}</span>
       </li>`).join('') : '<li class="empty-row">No matches</li>';
     list.querySelectorAll('[data-pi]').forEach((li) => {

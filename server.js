@@ -4,7 +4,7 @@ const zlib = require('node:zlib');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { db, createUser, verifyPassword } = require('./db');
+const { db, createUser, verifyPassword, setPassword } = require('./db');
 const { makeCertificatePdf } = require('./pdf');
 
 const PORT = process.env.PORT || 4655;
@@ -327,6 +327,110 @@ route('POST', '/api/logout', async (req, res) => {
   res.setHeader('Set-Cookie', 'session=; HttpOnly; Path=/; Max-Age=0');
   send(res, 200, { ok: true });
 });
+
+// ----- account management -----
+route('PUT', '/api/me/profile', async (req, res, _p, user) => {
+  const b = await readBody(req);
+  const name = (b.name || '').trim();
+  if (name.length < 2) return send(res, 400, { error: 'Name must be at least 2 characters.' });
+  db.prepare('UPDATE users SET name = ? WHERE id = ?').run(name, user.id);
+  // re-issue the session cookie so the new name shows without re-login
+  const fresh = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+  startSession(res, fresh);
+  send(res, 200, { ok: true, name });
+}, { auth: true });
+
+route('PUT', '/api/me/password', async (req, res, _p, user) => {
+  const b = await readBody(req);
+  const row = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+  if (!verifyPassword(row, b.current || '')) return send(res, 400, { error: 'Your current password is incorrect.' });
+  if (!b.next || b.next.length < 6) return send(res, 400, { error: 'The new password must be at least 6 characters.' });
+  setPassword(user.id, b.next);
+  send(res, 200, { ok: true });
+}, { auth: true });
+
+// ----- forgot / reset password -----
+// No SMTP in this zero-dependency stack, so the flow is admin-mediated:
+// the request creates a one-time code that the admin (Users & Pricing)
+// reads out to the learner, who enters it with their new password.
+route('POST', '/api/auth/forgot', async (req, res) => {
+  const { email } = await readBody(req);
+  const user = db.prepare('SELECT id FROM users WHERE email = ?').get((email || '').trim().toLowerCase());
+  if (user) {
+    db.prepare("UPDATE password_resets SET used = 1 WHERE user_id = ? AND used = 0").run(user.id);
+    db.prepare('INSERT INTO password_resets (user_id, code) VALUES (?, ?)').run(user.id, crypto.randomBytes(4).toString('hex'));
+  }
+  // Same response whether or not the account exists — no address probing.
+  send(res, 200, { ok: true, message: 'Reset requested. Ask your platform admin (or group leader) for your reset code, then enter it below.' });
+});
+
+route('POST', '/api/auth/reset', async (req, res) => {
+  const b = await readBody(req);
+  const user = db.prepare('SELECT id FROM users WHERE email = ?').get((b.email || '').trim().toLowerCase());
+  const reset = user && db.prepare(`
+    SELECT id FROM password_resets
+    WHERE user_id = ? AND code = ? AND used = 0 AND created_at >= datetime('now', '-1 day')`).get(user.id, (b.code || '').trim().toLowerCase());
+  if (!reset) return send(res, 400, { error: 'That code is not valid (or has expired). Request a new one.' });
+  if (!b.password || b.password.length < 6) return send(res, 400, { error: 'Password must be at least 6 characters.' });
+  setPassword(user.id, b.password);
+  db.prepare('UPDATE password_resets SET used = 1 WHERE id = ?').run(reset.id);
+  send(res, 200, { ok: true });
+});
+
+route('GET', '/api/admin/resets', async (req, res) => {
+  const resets = db.prepare(`
+    SELECT r.id, r.code, r.created_at, u.name, u.email FROM password_resets r
+    JOIN users u ON u.id = r.user_id
+    WHERE r.used = 0 AND r.created_at >= datetime('now', '-1 day')
+    ORDER BY r.created_at DESC`).all();
+  send(res, 200, { resets });
+}, { admin: true });
+
+// ----- Google sign-in -----
+// Verifies a Google Identity Services ID token with node:crypto (no SDK).
+// Enabled by setting GOOGLE_CLIENT_ID; the login page hides the button otherwise.
+let googleJwks = { keys: null, fetched: 0 };
+async function fetchGoogleKeys() {
+  if (!googleJwks.keys || Date.now() - googleJwks.fetched > 3600e3) {
+    const r = await fetch('https://www.googleapis.com/oauth2/v3/certs');
+    googleJwks = { keys: (await r.json()).keys, fetched: Date.now() };
+  }
+  return googleJwks.keys;
+}
+route('GET', '/api/auth/config', async (req, res) => {
+  send(res, 200, { googleClientId: process.env.GOOGLE_CLIENT_ID || null });
+});
+route('POST', '/api/auth/google', async (req, res) => {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  if (!clientId) return send(res, 400, { error: 'Google sign-in is not configured on this server.' });
+  const { credential } = await readBody(req);
+  const parts = (credential || '').split('.');
+  if (parts.length !== 3) return send(res, 400, { error: 'Invalid Google credential.' });
+  let header, payload;
+  try {
+    header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+    payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+  } catch { return send(res, 400, { error: 'Invalid Google credential.' }); }
+  const jwk = (await fetchGoogleKeys()).find((k) => k.kid === header.kid);
+  const verified = jwk && crypto.verify(
+    'RSA-SHA256',
+    Buffer.from(`${parts[0]}.${parts[1]}`),
+    crypto.createPublicKey({ key: jwk, format: 'jwk' }),
+    Buffer.from(parts[2], 'base64url'),
+  );
+  const issOk = payload.iss === 'https://accounts.google.com' || payload.iss === 'accounts.google.com';
+  if (!verified || !issOk || payload.aud !== clientId || payload.exp * 1000 < Date.now() || !payload.email_verified) {
+    return send(res, 401, { error: 'Google sign-in could not be verified.' });
+  }
+  const email = payload.email.toLowerCase();
+  let user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  if (!user) {
+    const id = createUser(payload.name || email.split('@')[0], email, crypto.randomBytes(12).toString('hex'), 'learner');
+    user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  }
+  startSession(res, user);
+  send(res, 200, { ok: true });
+});
 route('GET', '/api/currency', async (req, res) => {
   const all = db.prepare('SELECT code, symbol, name, rate_per_usd FROM currencies ORDER BY code = ? DESC, code').all('USD');
   send(res, 200, { active: activeCurrency(), all });
@@ -349,7 +453,20 @@ route('PUT', '/api/admin/currencies/:code', async (req, res, p) => {
   send(res, 200, { ok: true });
 }, { admin: true });
 
+// Showing up counts: 5 XP for the first visit each day, plus one-off
+// bonuses when the streak crosses a milestone that day.
+function maybeDailyLogin(userId) {
+  const already = db.prepare("SELECT 1 AS x FROM activity_events WHERE user_id = ? AND type = 'daily_login' AND day = date('now','localtime')").get(userId);
+  if (already) return;
+  award(userId, 'daily_login', 5, null);
+  const { streak } = userStreak(userId);
+  for (const [milestone, xp] of [[3, 15], [7, 35], [30, 150]]) {
+    if (streak === milestone) award(userId, `streak_${milestone}`, xp, null);
+  }
+}
+
 route('GET', '/api/me', async (req, res, _p, user) => {
+  maybeDailyLogin(user.id);
   const { streak, activeToday } = userStreak(user.id);
   // content_scope/can_view_analytics can change after login (stale session cookie), so read fresh.
   const flags = (user.role === 'teacher') ? teacherFlags(user.id) : { content_scope: 'all', can_view_analytics: 0 };
@@ -487,8 +604,15 @@ route('POST', '/api/module/:id/quiz', async (req, res, p, user) => {
   const priorPass = !!db.prepare('SELECT 1 AS x FROM quiz_attempts WHERE user_id = ? AND module_id = ? AND passed = 1').get(user.id, mod.id);
   db.prepare('INSERT INTO quiz_attempts (user_id, module_id, score, passed, answers_json) VALUES (?, ?, ?, ?, ?)')
     .run(user.id, mod.id, score, passed, JSON.stringify(answers));
-  let xpGained = 0;
-  if (passed && !priorPass) { award(user.id, 'quiz_pass', 30, mod.id); xpGained = 30; }
+  // every attempt earns a little (effort counts); first pass earns the big
+  // bonus plus a mark-based extra so a 100% beats a scrape-through
+  award(user.id, 'quiz_attempt', 2, mod.id);
+  let xpGained = 2;
+  if (passed && !priorPass) {
+    const bonus = 30 + Math.round(score / 10);
+    award(user.id, 'quiz_pass', bonus, mod.id);
+    xpGained += bonus;
+  }
   const completedModule = passed ? checkModuleCompletion(user.id, mod.id) : false;
   const nextModule = completedModule ? (() => {
     const mods = publishedTrackModules(mod.track_id);
@@ -632,6 +756,59 @@ route('GET', '/api/palette', async (req, res, _p, user) => {
   send(res, 200, { items });
 }, { auth: true });
 
+// ----- search -----
+// Full search across subject/module titles and — for modules the learner
+// owns — lesson titles AND lesson content, with a matched-text snippet.
+function blocksToText(blocksJson) {
+  try {
+    return JSON.parse(blocksJson || '[]').map((b) => {
+      const parts = [b.html, b.summary, b.text, b.prompt, b.instructions];
+      if (Array.isArray(b.items)) parts.push(b.items.join(' '));
+      if (Array.isArray(b.pairs)) parts.push(b.pairs.map((p) => `${p.l} ${p.r}`).join(' '));
+      if (Array.isArray(b.quiz)) parts.push(b.quiz.map((q) => q.q).join(' '));
+      return parts.filter(Boolean).join(' ');
+    }).join(' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  } catch { return ''; }
+}
+route('GET', '/api/search', async (req, res, _p, user) => {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const q = (url.searchParams.get('q') || '').trim().toLowerCase();
+  if (q.length < 2) return send(res, 200, { results: [] });
+  const like = `%${q}%`;
+  const results = [];
+
+  for (const s of db.prepare('SELECT id, title FROM subjects WHERE published = 1 AND (LOWER(title) LIKE ? OR LOWER(description) LIKE ?) LIMIT 5').all(like, like)) {
+    results.push({ type: 'subject', id: s.id, title: s.title });
+  }
+  for (const m of db.prepare(`
+    SELECT m.id, m.title FROM modules m JOIN tracks t ON t.id = m.track_id JOIN subjects s ON s.id = t.subject_id
+    WHERE m.published = 1 AND t.published = 1 AND s.published = 1 AND (LOWER(m.title) LIKE ? OR LOWER(m.description) LIKE ?) LIMIT 5`).all(like, like)) {
+    results.push({ type: 'module', id: m.id, title: m.title, owned: isOwned(user.id, m.id) });
+  }
+  const owned = ownedModuleIds(user.id);
+  if (owned.length) {
+    const ph = owned.map(() => '?').join(',');
+    const lessons = db.prepare(`
+      SELECT l.id, l.title, l.blocks_json, l.module_id, m.title AS module_title,
+        (SELECT COUNT(*) FROM lessons l2 WHERE l2.module_id = l.module_id AND (l2.position < l.position OR (l2.position = l.position AND l2.id < l.id))) AS idx
+      FROM lessons l JOIN modules m ON m.id = l.module_id WHERE l.module_id IN (${ph})`).all(...owned);
+    for (const l of lessons) {
+      const title = l.title.toLowerCase();
+      const content = blocksToText(l.blocks_json);
+      const at = content.toLowerCase().indexOf(q);
+      if (!title.includes(q) && at === -1) continue;
+      let snippet = null;
+      if (at !== -1) {
+        const from = Math.max(0, at - 40);
+        snippet = (from > 0 ? '…' : '') + content.slice(from, at + q.length + 60) + (at + q.length + 60 < content.length ? '…' : '');
+      }
+      results.push({ type: 'lesson', module_id: l.module_id, idx: l.idx, title: l.title, module_title: l.module_title, snippet });
+      if (results.length > 24) break;
+    }
+  }
+  send(res, 200, { results });
+}, { auth: true });
+
 // ----- AI tutor (extension point) -----
 // Wiring in Claude later should only touch this route: read the key, call the
 // API with the lesson context, and return { configured: true, reply }.
@@ -667,25 +844,43 @@ route('GET', '/api/leaderboard', async (req, res, _p, user) => {
 
   // Learners + leaders compete; staff/admins are excluded from the board.
   const people = db.prepare("SELECT id, name FROM users WHERE role IN ('learner','leader')").all();
-  let scoped = null;
-  if (subjectId) {
-    const ids = subjectModuleIds(subjectId);
-    scoped = new Set(ids);
-  }
+  const scoped = subjectId ? subjectModuleIds(subjectId) : null;
+  const ph = scoped && scoped.length ? scoped.map(() => '?').join(',') : null;
+
   const rows = people.map((u) => {
-    let xp;
+    let xp = 0;
+    let attempts = 0;
+    let bestScore = null;
+    let enrolled = 0;
     if (scoped) {
-      if (scoped.size === 0) xp = 0;
-      else {
-        const placeholders = [...scoped].map(() => '?').join(',');
-        xp = db.prepare(`SELECT COALESCE(SUM(xp),0) AS s FROM activity_events WHERE user_id = ? AND module_id IN (${placeholders})`).get(u.id, ...scoped).s;
+      if (ph) {
+        xp = db.prepare(`SELECT COALESCE(SUM(xp),0) AS s FROM activity_events WHERE user_id = ? AND module_id IN (${ph})`).get(u.id, ...scoped).s;
+        attempts = db.prepare(`SELECT COUNT(*) AS c FROM quiz_attempts WHERE user_id = ? AND module_id IN (${ph})`).get(u.id, ...scoped).c;
+        bestScore = db.prepare(`SELECT MAX(score) AS s FROM quiz_attempts WHERE user_id = ? AND module_id IN (${ph})`).get(u.id, ...scoped).s;
+        enrolled = db.prepare(`
+          SELECT COUNT(*) AS c FROM (
+            SELECT module_id FROM enrollments WHERE user_id = ? AND module_id IN (${ph})
+            UNION SELECT module_id FROM user_module_settings WHERE user_id = ? AND free_access = 1 AND module_id IN (${ph}))`)
+          .get(u.id, ...scoped, u.id, ...scoped).c;
       }
     } else {
       xp = userXp(u.id);
+      attempts = db.prepare('SELECT COUNT(*) AS c FROM quiz_attempts WHERE user_id = ?').get(u.id).c;
+      bestScore = db.prepare('SELECT MAX(score) AS s FROM quiz_attempts WHERE user_id = ?').get(u.id).s;
+      enrolled = db.prepare(`
+        SELECT COUNT(*) AS c FROM (
+          SELECT module_id FROM enrollments WHERE user_id = ?
+          UNION SELECT module_id FROM user_module_settings WHERE user_id = ? AND free_access = 1)`).get(u.id, u.id).c;
     }
-    return { id: u.id, name: u.name, xp, badges: badgeCount(u.id), level: levelInfo(xp).level, you: u.id === user.id };
-  }).filter((r) => r.xp > 0 || r.you);
-  rows.sort((a, b) => b.xp - a.xp || b.badges - a.badges || a.name.localeCompare(b.name));
+    const { streak } = userStreak(u.id);
+    const badges = badgeCount(u.id);
+    // Composite score: activity XP (lessons, quizzes incl. per-attempt credit,
+    // modules, daily logins) + earned badges + live streak. Every part is
+    // surfaced as its own column so learners can see how to climb.
+    const points = xp + badges * 25 + streak * 10;
+    return { id: u.id, name: u.name, xp, attempts, bestScore, streak, badges, points, level: levelInfo(xp).level, enrolled, you: u.id === user.id };
+  }).filter((r) => r.enrolled > 0 || r.points > 0 || r.you); // everyone with an active lesson shows, even at 0
+  rows.sort((a, b) => b.points - a.points || b.badges - a.badges || a.name.localeCompare(b.name));
   rows.forEach((r, i) => { r.rank = i + 1; });
   send(res, 200, { subjects: subjectsList, subjectId, leaderboard: rows.slice(0, 100) });
 }, { auth: true });
