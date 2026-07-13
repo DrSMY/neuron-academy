@@ -36,6 +36,8 @@ const ICONS = {
   moon: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z"/></svg>',
   users: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.2 3.4-5 6.5-5s5.7 1.8 6.5 5M16 4.7a3.5 3.5 0 0 1 0 6.6M18 15.2c1.8.7 3 2.1 3.5 4.3"/></svg>',
   medal: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="15" r="6"/><path d="M12 12.5 13 15h-2zM8.5 9.5 5 3m10.5 6.5L19 3M9 3l3 6 3-6"/></svg>',
+  cards: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="14" height="12" rx="2"/><path d="M7 7V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-2M7 13h6"/></svg>',
+  image: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m4 18 5.5-5 3.5 3 3-2.5L21 17"/></svg>',
 };
 const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -612,8 +614,8 @@ async function renderModule(id, lessonIdx = 0) {
   try {
     const { module: mod } = await api(`/api/module/${id}`);
     currentModule = mod;
-    // index space: lessons, then assignments, then the quiz
-    const maxIdx = mod.lessons.length + (mod.assignments?.length || 0);
+    // index space: lessons, then flashcards page, then assignments, then the quiz
+    const maxIdx = mod.lessons.length + ((mod.flashcards?.length || 0) > 0 ? 1 : 0) + (mod.assignments?.length || 0);
     currentLessonIdx = Math.min(lessonIdx, maxIdx);
     drawModule();
   } catch (err) {
@@ -629,22 +631,30 @@ async function renderModule(id, lessonIdx = 0) {
 function drawModule() {
   const mod = currentModule;
   const L = mod.lessons.length;
+  const F = (mod.flashcards?.length || 0) > 0 ? 1 : 0;
   const A = mod.assignments?.length || 0;
-  const isQuiz = currentLessonIdx >= L + A;
-  const isAssignment = !isQuiz && currentLessonIdx >= L;
+  const isQuiz = currentLessonIdx >= L + F + A;
+  const isFlash = F > 0 && currentLessonIdx === L;
+  const isAssignment = !isQuiz && !isFlash && currentLessonIdx >= L + F;
   const hasQuiz = mod.quiz.length > 0;
+  const allLessonsDone = mod.lessons.every((l) => l.done);
+  const quizLocked = hasQuiz && !allLessonsDone && !mod.completed;
 
   const navItems = mod.lessons.map((l, i) => `
     <button class="lesson-item ${l.done ? 'done' : ''} ${i === currentLessonIdx ? 'active' : ''}" data-idx="${i}">
       <span class="dot">${l.done ? icon('check') : l.icon ? icon(l.icon) : i + 1}</span>
       <span>${esc(l.title)}</span>
-    </button>`).join('') + (mod.assignments || []).map((a, i) => `
-    <button class="lesson-item asg-item ${a.submission ? 'done' : ''} ${L + i === currentLessonIdx ? 'active' : ''}" data-idx="${L + i}">
+    </button>`).join('') + (F ? `
+    <button class="lesson-item flash-item ${isFlash ? 'active' : ''}" data-idx="${L}">
+      <span class="dot">${icon('cards')}</span>
+      <span>Flashcards</span>
+    </button>` : '') + (mod.assignments || []).map((a, i) => `
+    <button class="lesson-item asg-item ${a.submission ? 'done' : ''} ${L + F + i === currentLessonIdx ? 'active' : ''}" data-idx="${L + F + i}">
       <span class="dot">${a.submission?.status === 'graded' ? icon('check') : icon('clipboard')}</span>
       <span>${esc(a.title)}</span>
     </button>`).join('') + (hasQuiz ? `
-    <button class="lesson-item quiz-item ${isQuiz ? 'active' : ''} ${mod.completed ? 'done' : ''}" data-idx="${L + A}">
-      <span class="dot">${mod.completed ? icon('check') : '?'}</span>
+    <button class="lesson-item quiz-item ${isQuiz ? 'active' : ''} ${mod.completed ? 'done' : ''} ${quizLocked ? 'gated' : ''}" data-idx="${L + F + A}" ${quizLocked ? 'title="Finish all lessons to unlock the final quiz"' : ''}>
+      <span class="dot">${mod.completed ? icon('check') : quizLocked ? icon('lock') : '?'}</span>
       <span>Final quiz</span>
     </button>` : '');
 
@@ -662,20 +672,79 @@ function drawModule() {
 
   $('#back-btn').onclick = () => { location.hash = '#/catalog'; };
   document.querySelectorAll('.lesson-item').forEach((b) => {
-    b.onclick = () => { currentLessonIdx = Number(b.dataset.idx); drawModule(); };
+    b.onclick = () => {
+      const idx = Number(b.dataset.idx);
+      if (idx === L + F + A && quizLocked) {
+        const left = mod.lessons.filter((l) => !l.done).length;
+        toast(`Finish all lessons first — ${left} to go, then the final quiz unlocks.`, 'error');
+        return;
+      }
+      currentLessonIdx = idx;
+      drawModule();
+    };
   });
 
   if (isQuiz) drawQuiz();
+  else if (isFlash) drawFlashcards();
   else if (isAssignment) drawAssignment();
   else drawLesson();
+}
+
+// ---------- module flashcards page (Contents: after lessons, before assignments) ----------
+function drawFlashcards() {
+  const mod = currentModule;
+  const cards = [...mod.flashcards];
+  const panel = $('#lesson-panel');
+  let idx = 0;
+  let flipped = false;
+
+  function paint() {
+    const c = cards[idx];
+    panel.innerHTML = `
+      <h2>Flashcards</h2>
+      <p style="color:var(--fg-muted);font-size:14px;margin-bottom:20px">${cards.length} card${cards.length === 1 ? '' : 's'} from <strong>${esc(mod.title)}</strong> — flip through them any time. They also come back on a smart schedule in <a href="#/review">Review</a>.</p>
+      <div class="flash-stage">
+        <p style="color:var(--fg-muted);margin-bottom:14px">Card ${idx + 1} of ${cards.length}</p>
+        <button class="flash-card ${flipped ? 'flipped' : ''}" id="mflash-card" aria-label="Flip card">
+          <span class="flash-side flash-front"><span class="flash-hint">${flipped ? '' : 'Tap to reveal'}</span>${esc(c.front)}</span>
+          <span class="flash-side flash-back">${esc(c.back)}</span>
+        </button>
+        <div class="grade-row" style="margin-top:18px">
+          <button class="btn btn-ghost" id="mflash-prev" ${idx === 0 ? 'disabled' : ''}>${icon('arrowLeft')} Back</button>
+          <button class="btn btn-ghost" id="mflash-shuffle">Shuffle</button>
+          <button class="btn btn-ghost" id="mflash-next" ${idx === cards.length - 1 ? 'disabled' : ''}>Next ${icon('arrowRight')}</button>
+        </div>
+      </div>
+      <div class="lesson-foot">
+        <button class="btn btn-ghost" id="prev-btn">${icon('arrowLeft')} Previous</button>
+        <button class="btn btn-primary" id="next-btn-f">Continue ${icon('arrowRight')}</button>
+      </div>`;
+    $('#mflash-card').onclick = () => { flipped = !flipped; paint(); };
+    $('#mflash-prev').onclick = () => { if (idx > 0) { idx--; flipped = false; paint(); } };
+    $('#mflash-next').onclick = () => { if (idx < cards.length - 1) { idx++; flipped = false; paint(); } };
+    $('#mflash-shuffle').onclick = () => {
+      for (let i = cards.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [cards[i], cards[j]] = [cards[j], cards[i]];
+      }
+      idx = 0;
+      flipped = false;
+      paint();
+      toast('Deck shuffled.');
+    };
+    $('#prev-btn').onclick = () => { currentLessonIdx--; drawModule(); };
+    $('#next-btn-f').onclick = () => { currentLessonIdx++; drawModule(); };
+  }
+  paint();
 }
 
 // ---------- assignment view ----------
 function drawAssignment() {
   const mod = currentModule;
   const L = mod.lessons.length;
+  const F = (mod.flashcards?.length || 0) > 0 ? 1 : 0;
   const A = mod.assignments.length;
-  const ai = currentLessonIdx - L;
+  const ai = currentLessonIdx - L - F;
   const a = mod.assignments[ai];
   const sub = a.submission;
   const graded = sub?.status === 'graded';
@@ -756,7 +825,7 @@ function drawAssignment() {
           const chip = $('#streak-chip');
           if (chip && meStats) { chip.classList.toggle('lit', meStats.activeToday); chip.querySelector('span').textContent = meStats.streak; }
         });
-        await celebrateLesson();
+        await celebrateLesson(20);
       } else toast('Submission updated.');
       drawModule();
     } catch (err) {
@@ -881,6 +950,53 @@ function blockHTML(b, bi) {
         <p class="blank-text">${html}</p>
         <div class="ex-actions"><button class="btn btn-primary btn-sm" data-check-blank="${bi}">${icon('check')} Check answers</button></div>`);
     }
+    case 'image': {
+      const spots = Array.isArray(b.hotspots) ? b.hotspots : [];
+      const figure = `
+        <figure class="infographic">
+          <div class="infographic-stage" data-image="${bi}">
+            <img src="${esc(b.url)}" alt="${esc(b.alt || b.caption || 'Lesson image')}" loading="lazy">
+            ${spots.map((h, hi) => `
+            <button type="button" class="hotspot" data-spot="${bi}:${hi}" style="left:${Number(h.x)}%;top:${Number(h.y)}%" aria-label="${esc(h.label)}"><span>${hi + 1}</span></button>`).join('')}
+          </div>
+          ${b.caption ? `<figcaption>${esc(b.caption)}</figcaption>` : ''}
+          ${spots.length ? `<div class="hotspot-info" data-spotinfo="${bi}" hidden></div>` : ''}
+        </figure>`;
+      if (!spots.length) return `<div class="lesson-content">${figure}</div>`;
+      return blockShellHTML(bi, 'Interactive infographic', b.prompt || `Tap all ${spots.length} numbered points to explore the image.`, figure);
+    }
+    case 'tf':
+      return blockShellHTML(bi, 'True or false?', b.prompt || 'Mark each statement true or false, then check.', `
+        <div class="tf-list" data-tf="${bi}">
+          ${b.statements.map((s, si) => `
+          <div class="tf-row" data-ts="${si}">
+            <span class="tf-text">${esc(s.text)}</span>
+            <span class="tf-btns">
+              <button type="button" class="btn btn-ghost btn-sm" data-tfpick="true">True</button>
+              <button type="button" class="btn btn-ghost btn-sm" data-tfpick="false">False</button>
+            </span>
+          </div>`).join('')}
+        </div>
+        <div class="ex-actions"><button class="btn btn-primary btn-sm" data-check-tf="${bi}">${icon('check')} Check answers</button></div>`);
+    case 'multi':
+      return blockShellHTML(bi, 'Choose all that apply', b.prompt || b.q || 'More than one answer can be right — select every correct option.', `
+        <div class="multi-list" data-multi="${bi}">
+          ${shuffled(b.options).map((o) => `
+          <label class="quiz-opt"><input type="checkbox" value="${o.i}"> <span>${esc(o.v)}</span></label>`).join('')}
+        </div>
+        <div class="ex-actions"><button class="btn btn-primary btn-sm" data-check-multi="${bi}">${icon('check')} Check answers</button></div>`);
+    case 'sort':
+      return blockShellHTML(bi, 'Drag & drop', b.prompt || 'Drag each item into its bucket (or tap an item, then tap a bucket).', `
+        <div class="sort-wrap" data-sort="${bi}">
+          <div class="sort-pool" data-pool>
+            ${shuffled(b.items.map((it) => it.text)).map((o) => `<button type="button" class="sort-chip" draggable="true" data-si="${o.i}">${esc(o.v)}</button>`).join('')}
+          </div>
+          <div class="sort-buckets">
+            ${b.buckets.map((bk, ki) => `
+            <div class="sort-bucket"><h5>${esc(bk)}</h5><div class="sort-drop" data-drop="${ki}"></div></div>`).join('')}
+          </div>
+        </div>
+        <div class="ex-actions"><button class="btn btn-primary btn-sm" data-check-sort="${bi}">${icon('check')} Check answers</button></div>`);
     default: return '';
   }
 }
@@ -1090,6 +1206,163 @@ function bindBlocks(lesson) {
     };
   });
 
+  // interactive infographics: every hotspot must be explored
+  panel.querySelectorAll('[data-image]').forEach((stage) => {
+    const bi = Number(stage.dataset.image);
+    const b = lesson.blocks[bi];
+    const spots = Array.isArray(b.hotspots) ? b.hotspots : [];
+    if (!spots.length) return;
+    const seen = new Set();
+    const info = panel.querySelector(`[data-spotinfo="${bi}"]`);
+    stage.querySelectorAll('.hotspot').forEach((h) => {
+      h.onclick = () => {
+        const hi = Number(h.dataset.spot.split(':')[1]);
+        const spot = spots[hi];
+        stage.querySelectorAll('.hotspot').forEach((x) => x.classList.remove('open'));
+        h.classList.add('open', 'seen');
+        seen.add(hi);
+        if (info) {
+          info.hidden = false;
+          info.innerHTML = `<strong>${hi + 1}. ${esc(spot.label)}</strong><p>${esc(spot.text)}</p><span class="drag-hint">${seen.size}/${spots.length} explored</span>`;
+        }
+        if (seen.size === spots.length) markSolved(bi, 'All explored');
+      };
+    });
+  });
+
+  // true / false
+  panel.querySelectorAll('[data-tf]').forEach((wrap) => {
+    const bi = Number(wrap.dataset.tf);
+    const b = lesson.blocks[bi];
+    wrap.querySelectorAll('.tf-row').forEach((row) => {
+      row.querySelectorAll('[data-tfpick]').forEach((btn) => {
+        btn.onclick = () => {
+          if (btn.disabled) return;
+          row.querySelectorAll('[data-tfpick]').forEach((x) => x.classList.remove('picked'));
+          btn.classList.add('picked');
+          row.dataset.pick = btn.dataset.tfpick;
+          row.classList.remove('correct', 'wrong');
+        };
+      });
+    });
+    $(`[data-check-tf="${bi}"]`).onclick = () => {
+      const rows = [...wrap.querySelectorAll('.tf-row')];
+      if (rows.some((row) => !row.dataset.pick)) { toast('Mark every statement true or false first.', 'error'); return; }
+      let right = 0;
+      rows.forEach((row) => {
+        const ok = (row.dataset.pick === 'true') === !!b.statements[Number(row.dataset.ts)].answer;
+        row.classList.toggle('correct', ok);
+        row.classList.toggle('wrong', !ok);
+        if (ok) right++;
+      });
+      if (right === rows.length) {
+        wrap.querySelectorAll('[data-tfpick]').forEach((x) => { x.disabled = true; });
+        $(`[data-check-tf="${bi}"]`).disabled = true;
+        markSolved(bi);
+      } else {
+        registerWrong(bi, `${right} of ${rows.length} statements ${right === 1 ? 'is' : 'are'} marked correctly — rethink the highlighted ones.`);
+        toast('Not all right yet — flip the wrong ones.', 'error');
+      }
+    };
+  });
+
+  // choose all that apply
+  panel.querySelectorAll('[data-check-multi]').forEach((btn) => {
+    const bi = Number(btn.dataset.checkMulti);
+    const b = lesson.blocks[bi];
+    const wrap = panel.querySelector(`[data-multi="${bi}"]`);
+    btn.onclick = () => {
+      const picked = new Set([...wrap.querySelectorAll('input:checked')].map((i) => Number(i.value)));
+      if (!picked.size) { toast('Select at least one option first.', 'error'); return; }
+      const correct = new Set(b.correct);
+      const allOk = picked.size === correct.size && [...picked].every((v) => correct.has(v));
+      wrap.querySelectorAll('input').forEach((inp) => {
+        const opt = inp.closest('.quiz-opt');
+        opt.classList.remove('correct', 'wrong');
+        if (allOk && inp.checked) opt.classList.add('correct');
+        else if (!allOk && inp.checked && !correct.has(Number(inp.value))) opt.classList.add('wrong');
+      });
+      if (allOk) {
+        wrap.querySelectorAll('input').forEach((i) => { i.disabled = true; });
+        btn.disabled = true;
+        markSolved(bi);
+      } else {
+        const hits = [...picked].filter((v) => correct.has(v)).length;
+        registerWrong(bi, `${correct.size} option${correct.size === 1 ? ' is' : 's are'} correct in total — you have ${hits} of them selected${picked.size > hits ? ' (plus some that don’t belong)' : ''}.`);
+        toast('Not quite — adjust your selection.', 'error');
+      }
+    };
+  });
+
+  // drag & drop sorting into buckets
+  panel.querySelectorAll('[data-sort]').forEach((wrap) => {
+    const bi = Number(wrap.dataset.sort);
+    const b = lesson.blocks[bi];
+    let draggingChip = null;
+    let selectedChip = null;
+    const zones = [wrap.querySelector('[data-pool]'), ...wrap.querySelectorAll('[data-drop]')];
+    wrap.querySelectorAll('.sort-chip').forEach((chip) => {
+      chip.addEventListener('dragstart', () => { draggingChip = chip; chip.classList.add('dragging'); });
+      chip.addEventListener('dragend', () => { draggingChip = null; chip.classList.remove('dragging'); });
+      // tap-to-place fallback for touch screens
+      chip.onclick = () => {
+        if (chip.classList.contains('locked')) return;
+        const was = chip.classList.contains('selected');
+        wrap.querySelectorAll('.sort-chip').forEach((c) => c.classList.remove('selected'));
+        selectedChip = was ? null : chip;
+        if (!was) chip.classList.add('selected');
+      };
+    });
+    zones.forEach((z) => {
+      z.addEventListener('dragover', (e) => { e.preventDefault(); z.classList.add('over'); });
+      z.addEventListener('dragleave', () => z.classList.remove('over'));
+      z.addEventListener('drop', (e) => {
+        e.preventDefault();
+        z.classList.remove('over');
+        if (draggingChip && !draggingChip.classList.contains('locked')) { z.appendChild(draggingChip); draggingChip.classList.remove('wrong'); }
+      });
+      z.addEventListener('click', (e) => {
+        if (!selectedChip || e.target.closest('.sort-chip')) return;
+        z.appendChild(selectedChip);
+        selectedChip.classList.remove('selected', 'wrong');
+        selectedChip = null;
+      });
+    });
+    wrap.querySelectorAll('.sort-bucket h5').forEach((h5) => {
+      h5.onclick = () => {
+        if (!selectedChip) return;
+        h5.parentElement.querySelector('[data-drop]').appendChild(selectedChip);
+        selectedChip.classList.remove('selected', 'wrong');
+        selectedChip = null;
+      };
+    });
+    $(`[data-check-sort="${bi}"]`).onclick = () => {
+      const pool = wrap.querySelector('[data-pool]');
+      if (pool.querySelectorAll('.sort-chip').length) { toast('Place every item into a bucket first.', 'error'); return; }
+      let right = 0;
+      let total = 0;
+      wrap.querySelectorAll('[data-drop]').forEach((z) => {
+        const ki = Number(z.dataset.drop);
+        z.querySelectorAll('.sort-chip').forEach((chip) => {
+          total++;
+          const ok = b.items[Number(chip.dataset.si)].bucket === ki;
+          chip.classList.toggle('wrong', !ok);
+          if (ok) right++;
+        });
+      });
+      if (right === total) {
+        wrap.querySelectorAll('.sort-chip').forEach((c) => { c.classList.add('locked'); c.draggable = false; });
+        $(`[data-check-sort="${bi}"]`).disabled = true;
+        markSolved(bi, 'All sorted');
+      } else {
+        wrap.classList.add('shake');
+        setTimeout(() => wrap.classList.remove('shake'), 450);
+        registerWrong(bi, `${right} of ${total} item${right === 1 ? ' is' : 's are'} in the right bucket — the highlighted ones are misplaced.`);
+        toast('Some items are in the wrong bucket.', 'error');
+      }
+    };
+  });
+
   // reveal answers (unlocked after 3 wrong tries on a block)
   panel.querySelectorAll('[data-reveal]').forEach((btn) => {
     const bi = Number(btn.dataset.reveal);
@@ -1124,10 +1397,46 @@ function bindBlocks(lesson) {
         });
         const chk = panel.querySelector(`[data-check-vquiz="${bi}"]`);
         if (chk) chk.disabled = true;
+      } else if (b.type === 'tf') {
+        panel.querySelectorAll(`[data-tf="${bi}"] .tf-row`).forEach((row) => {
+          const want = b.statements[Number(row.dataset.ts)].answer ? 'true' : 'false';
+          row.classList.remove('wrong');
+          row.classList.add('correct');
+          row.querySelectorAll('[data-tfpick]').forEach((x) => {
+            x.classList.toggle('picked', x.dataset.tfpick === want);
+            x.disabled = true;
+          });
+        });
+        const chk = panel.querySelector(`[data-check-tf="${bi}"]`);
+        if (chk) chk.disabled = true;
+      } else if (b.type === 'multi') {
+        panel.querySelectorAll(`[data-multi="${bi}"] input`).forEach((inp) => {
+          const ok = b.correct.includes(Number(inp.value));
+          inp.checked = ok;
+          const opt = inp.closest('.quiz-opt');
+          opt.classList.remove('wrong');
+          opt.classList.toggle('correct', ok);
+          inp.disabled = true;
+        });
+        const chk = panel.querySelector(`[data-check-multi="${bi}"]`);
+        if (chk) chk.disabled = true;
+      } else if (b.type === 'sort') {
+        const wrap = panel.querySelector(`[data-sort="${bi}"]`);
+        wrap.querySelectorAll('.sort-chip').forEach((chip) => {
+          const it = b.items[Number(chip.dataset.si)];
+          const drop = wrap.querySelector(`[data-drop="${it.bucket}"]`);
+          if (drop) drop.appendChild(chip);
+          chip.classList.remove('wrong', 'selected');
+          chip.classList.add('locked');
+          chip.draggable = false;
+        });
+        const chk = panel.querySelector(`[data-check-sort="${bi}"]`);
+        if (chk) chk.disabled = true;
       }
       btn.hidden = true;
       const help = panel.querySelector(`[data-help="${bi}"]`);
       if (help) help.hidden = true;
+      exState.revealed = (exState.revealed || 0) + 1;
       markSolved(bi, 'Revealed');
     };
   });
@@ -1244,10 +1553,13 @@ function bindTutor(lesson) {
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
 }
 
-const INTERACTIVE_TYPES = new Set(['code', 'order', 'match', 'blank']);
-// A video block becomes a gated exercise when it carries a checkpoint quiz.
+const INTERACTIVE_TYPES = new Set(['code', 'order', 'match', 'blank', 'tf', 'multi', 'sort']);
+// A video block becomes a gated exercise when it carries a checkpoint quiz;
+// an image becomes one when it has hotspots to explore.
 function blockIsInteractive(b) {
-  return INTERACTIVE_TYPES.has(b.type) || (b.type === 'video' && Array.isArray(b.quiz) && b.quiz.length > 0);
+  return INTERACTIVE_TYPES.has(b.type)
+    || (b.type === 'video' && Array.isArray(b.quiz) && b.quiz.length > 0)
+    || (b.type === 'image' && Array.isArray(b.hotspots) && b.hotspots.length > 0);
 }
 
 function drawLesson() {
@@ -1256,13 +1568,15 @@ function drawLesson() {
   const panel = $('#lesson-panel');
   const last = currentLessonIdx === mod.lessons.length - 1;
   const hasQuiz = mod.quiz.length > 0;
+  const F = (mod.flashcards?.length || 0) > 0 ? 1 : 0;
   const A = mod.assignments?.length || 0;
   const nextLabel = l.done
-    ? (!last ? 'Next lesson' : A ? 'Go to assignments' : hasQuiz ? 'Go to quiz' : 'Done')
+    ? (!last ? 'Next lesson' : F ? 'Go to flashcards' : A ? 'Go to assignments' : hasQuiz ? 'Go to quiz' : 'Done')
     : 'Mark complete & continue';
 
   exState.solved = new Set();
   exState.wrong = {};
+  exState.revealed = 0;
   exState.interactive = l.blocks.filter(blockIsInteractive).length;
 
   panel.innerHTML = `
@@ -1312,21 +1626,28 @@ function drawLesson() {
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span>';
       try {
-        const r = await api(`/api/lesson/${l.id}/complete`, { method: 'POST' });
+        // report the trial level: total wrong tries + reveals used, so the
+        // server can pay flawless runs more and revealed runs less
+        const trials = Object.values(exState.wrong).reduce((n, v) => n + v, 0);
+        const r = await api(`/api/lesson/${l.id}/complete`, {
+          method: 'POST',
+          body: { trials, revealed: exState.revealed || 0, exercises: exState.interactive },
+        });
         l.done = true;
         if (r.firstTime) {
           refreshMe().then(() => {
             const chip = $('#streak-chip');
             if (chip && meStats) { chip.classList.toggle('lit', meStats.activeToday); chip.querySelector('span').textContent = meStats.streak; }
           });
-          await celebrateLesson();
+          if (r.flawless) toast('Flawless — no wrong tries, bonus XP!');
+          await celebrateLesson(r.xpGained || 10);
         }
         if (r.moduleCompleted && !mod.completed) { mod.completed = true; toast('Module completed! The next module is unlocked.', 'success'); }
       } catch (err) { toast(err.message, 'error'); btn.disabled = false; return; }
     }
-    if (!last) currentLessonIdx++;
-    else if (A) currentLessonIdx = mod.lessons.length;
-    else if (hasQuiz) currentLessonIdx = mod.lessons.length + A;
+    // unified index space: the next page is flashcards, assignments or the quiz
+    const total = mod.lessons.length + F + A + (hasQuiz ? 1 : 0);
+    if (currentLessonIdx < total - 1) currentLessonIdx++;
     drawModule();
   };
 }
@@ -1334,6 +1655,21 @@ function drawLesson() {
 function drawQuiz(result = null) {
   const mod = currentModule;
   const panel = $('#lesson-panel');
+
+  // The final quiz stays locked until every lesson is finished.
+  if (!mod.completed && !mod.lessons.every((l) => l.done)) {
+    const left = mod.lessons.filter((l) => !l.done).length;
+    const firstUndone = mod.lessons.findIndex((l) => !l.done);
+    panel.innerHTML = `
+      <div class="empty" style="padding:48px 20px;text-align:center">
+        ${icon('lock')}
+        <h3 style="margin-top:12px">Final quiz is locked</h3>
+        <p style="color:var(--fg-muted);max-width:420px;margin:8px auto 20px">Finish all ${mod.lessons.length} lessons to unlock it — ${left} to go. The quiz checks what you learned across the whole module.</p>
+        <button class="btn btn-primary" id="quiz-goto-lesson">Continue lessons ${icon('arrowRight')}</button>
+      </div>`;
+    $('#quiz-goto-lesson').onclick = () => { currentLessonIdx = firstUndone; drawModule(); };
+    return;
+  }
   const answers = drawQuiz._answers || (drawQuiz._answers = {});
 
   let banner = '';
@@ -1345,6 +1681,7 @@ function drawQuiz(result = null) {
         <strong>${result.passed ? 'Passed — brilliant work!' : `Not quite — you need ${result.pass_percent}% to pass.`}</strong><br>
         <span style="color:var(--fg-muted);font-size:13.5px">${result.passed ? (result.moduleCompleted ? 'Module complete.' : 'Quiz passed. Finish any remaining lessons to complete the module.') : 'Review the lessons and try again — correct answers are highlighted below.'}</span>
         ${result.xpGained ? `<span class="xp-chip">${icon('zap')} +${result.xpGained + (result.moduleCompleted ? 50 : 0)} XP</span>` : ''}
+        ${result.trialLevel ? `<span style="display:block;color:var(--fg-faint);font-size:12.5px;margin-top:5px">${result.trialLevel === 1 ? '🎯 Passed on your 1st try — full trial bonus!' : `Passed on try ${result.trialLevel} — earlier passes earn a bigger bonus.`}</span>` : ''}
       </div>
     </div>
     ${result.passed && result.moduleCompleted && result.nextModule ? `
@@ -1410,7 +1747,10 @@ function drawQuiz(result = null) {
     $('#quiz-done').onclick = () => { drawQuiz._answers = {}; location.hash = '#/catalog'; };
   } else {
     // Re-fetch so the retry draws a fresh random set from the question bank.
-    $('#quiz-retry').onclick = () => { drawQuiz._answers = {}; renderModule(mod.id, mod.lessons.length + (mod.assignments?.length || 0)); };
+    $('#quiz-retry').onclick = () => {
+      drawQuiz._answers = {};
+      renderModule(mod.id, mod.lessons.length + ((mod.flashcards?.length || 0) > 0 ? 1 : 0) + (mod.assignments?.length || 0));
+    };
   }
 }
 
@@ -1453,17 +1793,20 @@ async function renderLearning() {
 }
 
 // ---------- review hub: streak, progress, quiz history, flashcards ----------
+let reviewDeck = null; // null = due cards + random recent mix; number = one module's deck
 async function renderReview() {
   app.innerHTML = shell('review', '<div class="skeleton" style="min-height:340px"></div>');
   bindShell();
-  let cards, dash, quizHistory;
+  let queue, dash, quizHistory;
   try {
-    [cards, dash, quizHistory] = await Promise.all([
-      api('/api/review/queue').then((r) => r.cards),
+    [queue, dash, quizHistory] = await Promise.all([
+      api(`/api/review/queue${reviewDeck ? '?module=' + reviewDeck : ''}`),
       api('/api/dashboard'),
       api('/api/quiz-history').then((r) => r.history),
     ]);
   } catch (err) { if (err.status === 401) { me = null; render(); } else toast(err.message, 'error'); return; }
+  const cards = queue.cards;
+  const decks = queue.decks || [];
 
   const overallPct = dash.stats.owned ? Math.round((dash.stats.completed / dash.stats.owned) * 100) : 0;
 
@@ -1518,7 +1861,12 @@ async function renderReview() {
       ${dash.recentCompletions.map((c) => `
       <a class="recent-chip" href="#/module/${c.module_id}">${icon('check')} ${esc(c.title)}</a>`).join('')}
     </div>` : ''}
-    <div class="section-row"><h3>Daily flashcard review</h3></div>`;
+    <div class="section-row"><h3>Daily flashcard review</h3></div>
+    <p class="hint-text" style="margin:-8px 0 12px">Cards that are due come first, topped up with a random mix from your recent activity — or pick one of your active lessons' decks to practice it directly.</p>
+    <div class="lb-filter" id="deck-filter">
+      <button class="chip ${!reviewDeck ? 'active' : ''}" data-deck="">${icon('zap')} Due + recent mix</button>
+      ${decks.map((d) => `<button class="chip ${reviewDeck === d.id ? 'active' : ''}" data-deck="${d.id}">${icon('cards')} ${esc(d.title)} · ${d.cards}</button>`).join('')}
+    </div>`;
 
   const total = cards.length;
   let idx = 0;
@@ -1532,14 +1880,14 @@ async function renderReview() {
         if (link) link.innerHTML = 'Review' + (meStats?.dueReviews ? ` <span class="due-pill">${meStats.dueReviews}</span>` : '');
       });
       area.innerHTML = `
-        <div class="card empty">${icon('trophy')}<h3>${total ? 'Review complete!' : 'Nothing due today'}</h3>
-        <p>${total ? `You reviewed ${idx} card${idx === 1 ? '' : 's'}. They'll come back right before you'd forget them.` : 'Flashcards from your modules appear here on their schedule. Learn something new to add more.'}</p>
+        <div class="card empty">${icon('trophy')}<h3>${total ? 'Review complete!' : reviewDeck ? 'This deck has no cards yet' : 'Nothing to review yet'}</h3>
+        <p>${total ? `You reviewed ${idx} card${idx === 1 ? '' : 's'}. They'll come back right before you'd forget them.` : 'Flashcards from your active lessons appear here — learn something new to add more.'}</p>
         ${dash.resume ? `<a class="btn btn-primary" href="#/module/${dash.resume.module_id}/lesson/${dash.resume.lesson_idx}">Continue learning ${icon('arrowRight')}</a>` : `<a class="btn btn-primary" href="#/catalog">Explore modules ${icon('arrowRight')}</a>`}</div>`;
       return;
     }
     const c = cards[idx];
     area.innerHTML = `
-      <p style="color:var(--fg-muted);margin-bottom:14px">Card ${idx + 1} of ${cards.length} · ${esc(c.module_title)}</p>
+      <p style="color:var(--fg-muted);margin-bottom:14px">Card ${idx + 1} of ${cards.length} · ${esc(c.module_title)}${c.practice ? ' · <span class="badge draft">Practice</span>' : ''}</p>
       <div class="progress-track" style="max-width:560px;margin-bottom:24px"><div class="progress-fill" style="width:${Math.round((idx / cards.length) * 100)}%"></div></div>
       <div class="flash-stage">
         <button class="flash-card ${flipped ? 'flipped' : ''}" id="flash-card" aria-label="Flip card">
@@ -1566,6 +1914,9 @@ async function renderReview() {
     });
   }
   $('.container').innerHTML = recap + '<div id="flash-area"></div>';
+  document.querySelectorAll('#deck-filter .chip').forEach((b) => {
+    b.onclick = () => { reviewDeck = b.dataset.deck ? Number(b.dataset.deck) : null; renderReview(); };
+  });
   draw();
 }
 
@@ -1765,7 +2116,7 @@ function thumbHTML(i, size = '') {
 }
 
 // ---------- celebrations ----------
-function celebrateLesson() {
+function celebrateLesson(xp = 10) {
   if (REDUCED_MOTION) return Promise.resolve();
   return new Promise((resolve) => {
     const el = document.createElement('div');
@@ -1775,7 +2126,7 @@ function celebrateLesson() {
         <circle cx="50" cy="50" r="44" fill="none"/>
         <path d="M30 52l14 13 26-30" fill="none"/>
       </svg>
-      <span class="celebrate-xp">+10 XP</span>`;
+      <span class="celebrate-xp">+${xp} XP</span>`;
     document.body.appendChild(el);
     setTimeout(() => { el.classList.add('out'); }, 950);
     setTimeout(() => { el.remove(); resolve(); }, 1250);
@@ -1925,7 +2276,14 @@ const palette = {
         <span class="p-hint">${esc(it.hint || '')}</span>
       </li>`).join('') : '<li class="empty-row">No matches</li>';
     list.querySelectorAll('[data-pi]').forEach((li) => {
-      li.onmouseenter = () => { this.sel = Number(li.dataset.pi); this.paint(); };
+      // hover just retargets the highlight — it must NOT re-render the list,
+      // or the element under the cursor is replaced mid-click and the click
+      // silently dies (this is what made search results feel unclickable)
+      li.onmouseenter = () => {
+        this.sel = Number(li.dataset.pi);
+        list.querySelectorAll('[data-pi]').forEach((x) => x.classList.toggle('active', x === li));
+      };
+      li.onmousedown = (e) => e.preventDefault(); // keep focus in the input
       li.onclick = () => this.exec(this.filtered[Number(li.dataset.pi)]);
     });
   },

@@ -553,11 +553,79 @@ async function renderEditor(moduleId) {
 const BLOCK_META = {
   text: { label: 'Text', hint: 'Rich HTML content' },
   video: { label: 'Video', hint: 'Embedded video' },
+  image: { label: 'Image / infographic', hint: 'Picture with optional interactive hotspots' },
   code: { label: 'Code playground', hint: 'Runnable JS with goal output' },
   order: { label: 'Put in order', hint: 'Drag-to-order exercise' },
   match: { label: 'Match pairs', hint: 'Term ↔ definition' },
   blank: { label: 'Fill blanks', hint: '{{answer}} placeholders' },
+  tf: { label: 'True / false', hint: 'Statements to judge' },
+  multi: { label: 'Choose all that apply', hint: 'Multiple correct answers' },
+  sort: { label: 'Drag into buckets', hint: 'Sort items into categories' },
 };
+
+// ---- textarea <-> structured-block serializers for the new types ----
+function serializeHotspots(hotspots) {
+  return (hotspots || []).map((h) => `${h.x}, ${h.y}, ${h.label} = ${h.text}`).join('\n');
+}
+function parseHotspots(raw) {
+  const spots = [];
+  for (const line of (raw || '').split('\n').map((s) => s.trim()).filter(Boolean)) {
+    const eq = line.indexOf('=');
+    if (eq < 0) continue;
+    const left = line.slice(0, eq).split(',').map((s) => s.trim());
+    if (left.length < 3) continue;
+    const x = Number(left[0]);
+    const y = Number(left[1]);
+    const label = left.slice(2).join(', ');
+    const text = line.slice(eq + 1).trim();
+    if (Number.isNaN(x) || Number.isNaN(y) || !label || !text) continue;
+    spots.push({ x: Math.min(100, Math.max(0, x)), y: Math.min(100, Math.max(0, y)), label, text });
+  }
+  return spots;
+}
+function serializeStatements(statements) {
+  return (statements || []).map((s) => `${s.text} = ${s.answer ? 'true' : 'false'}`).join('\n');
+}
+function parseStatements(raw) {
+  const out = [];
+  for (const line of (raw || '').split('\n').map((s) => s.trim()).filter(Boolean)) {
+    const eq = line.lastIndexOf('=');
+    if (eq < 0) continue;
+    const text = line.slice(0, eq).trim();
+    const ans = line.slice(eq + 1).trim().toLowerCase();
+    if (!text || !['true', 'false', 't', 'f'].includes(ans)) continue;
+    out.push({ text, answer: ans === 'true' || ans === 't' });
+  }
+  return out;
+}
+function serializeMultiOptions(b) {
+  const correct = new Set(b.correct || []);
+  return (b.options || []).map((o, i) => (correct.has(i) ? '*' : '') + o).join('\n');
+}
+function parseMultiOptions(raw) {
+  const lines = (raw || '').split('\n').map((s) => s.trim()).filter(Boolean);
+  const options = lines.map((l) => l.replace(/^\*/, '').trim());
+  const correct = lines.map((l, i) => (l.startsWith('*') ? i : -1)).filter((i) => i >= 0);
+  return { options, correct };
+}
+function serializeSortItems(b) {
+  return (b.items || []).map((it) => `${it.text} = ${(b.buckets || [])[it.bucket] ?? it.bucket + 1}`).join('\n');
+}
+function parseSortItems(raw, buckets) {
+  const out = [];
+  for (const line of (raw || '').split('\n').map((s) => s.trim()).filter(Boolean)) {
+    const eq = line.lastIndexOf('=');
+    if (eq < 0) continue;
+    const text = line.slice(0, eq).trim();
+    const bk = line.slice(eq + 1).trim();
+    if (!text || !bk) continue;
+    let bucket = buckets.findIndex((b) => b.toLowerCase() === bk.toLowerCase());
+    if (bucket < 0 && /^\d+$/.test(bk)) bucket = Number(bk) - 1; // 1-based number fallback
+    if (bucket < 0 || bucket >= buckets.length) bucket = 0;
+    out.push({ text, bucket });
+  }
+  return out;
+}
 
 // Video checkpoint quiz <-> plain text. One question per blank-line-separated
 // block: first line is the question, following lines are options, the correct
@@ -614,6 +682,31 @@ function blockEditorHTML(b, i) {
     <div class="field"><label>Text with {{answer}} placeholders</label>
     <textarea data-f="text" data-i="${i}" style="min-height:90px">${esc(b.text || '')}</textarea>
     <div class="hint">Accept alternates with a pipe: {{embed|embeds}}</div></div>`;
+  if (b.type === 'image') body = `
+    <div class="field"><label>Image URL</label><input data-f="url" data-i="${i}" value="${esc(b.url || '')}" placeholder="https://example.com/diagram.png">
+    <div class="hint">Any hosted image (PNG/JPG/SVG). Tip: keep it under ~1 MB for fast loading.</div></div>
+    <div class="row-2">
+      <div class="field"><label>Alt text (accessibility)</label><input data-f="alt" data-i="${i}" value="${esc(b.alt || '')}" placeholder="What the image shows"></div>
+      <div class="field"><label>Caption (optional)</label><input data-f="caption" data-i="${i}" value="${esc(b.caption || '')}"></div>
+    </div>
+    <div class="field"><label>Interactive hotspots <span style="color:var(--fg-faint);font-weight:400">(optional — one per line as: x, y, Label = Explanation)</span></label>
+    <textarea data-f="hotspots" data-i="${i}" style="min-height:90px;font-family:monospace;font-size:12.5px" placeholder="30, 40, Hippocampus = Consolidates short-term memory\n70, 25, Frontal lobe = Planning and decision-making">${esc(serializeHotspots(b.hotspots))}</textarea>
+    <div class="hint">x and y are percentages from the image's top-left corner (0–100). With hotspots the image becomes an exercise: learners must tap every numbered point.</div></div>`;
+  if (b.type === 'tf') body = `
+    <div class="field"><label>Prompt</label><input data-f="prompt" data-i="${i}" value="${esc(b.prompt || '')}" placeholder="True or false?"></div>
+    <div class="field"><label>Statements — one per line as: statement = true/false</label>
+    <textarea data-f="statements" data-i="${i}" style="min-height:100px" placeholder="The heart has four chambers. = true\nInsulin raises blood sugar. = false">${esc(serializeStatements(b.statements))}</textarea></div>`;
+  if (b.type === 'multi') body = `
+    <div class="field"><label>Question / prompt</label><input data-f="prompt" data-i="${i}" value="${esc(b.prompt || '')}" placeholder="Which of these apply? Choose all that are correct."></div>
+    <div class="field"><label>Options — one per line, mark every CORRECT one with a leading *</label>
+    <textarea data-f="multiopts" data-i="${i}" style="min-height:100px" placeholder="*A correct option\nA wrong option\n*Another correct option">${esc(serializeMultiOptions(b))}</textarea>
+    <div class="hint">Learners must select exactly the starred options (shown shuffled, without stars).</div></div>`;
+  if (b.type === 'sort') body = `
+    <div class="field"><label>Prompt</label><input data-f="prompt" data-i="${i}" value="${esc(b.prompt || '')}" placeholder="Drag each item into its group"></div>
+    <div class="field"><label>Buckets — comma-separated category names</label>
+    <input data-f="buckets" data-i="${i}" value="${esc((b.buckets || []).join(', '))}" placeholder="Mammal, Bird, Fish"></div>
+    <div class="field"><label>Items — one per line as: item = bucket name</label>
+    <textarea data-f="sortitems" data-i="${i}" style="min-height:100px" placeholder="Whale = Mammal\nPenguin = Bird\nShark = Fish">${esc(serializeSortItems(b))}</textarea></div>`;
   return `
   <div class="card q-editor" data-block="${i}">
     <div class="block-head" style="margin-bottom:12px">
@@ -647,6 +740,12 @@ function lessonForm(moduleId, lesson) {
         .map((line) => { const ix = line.indexOf('='); return { l: line.slice(0, ix).trim(), r: line.slice(ix + 1).trim() }; })
         .filter((p) => p.l && p.r);
       else if (f === 'videoquiz') { const q = parseVideoQuiz(el.value); if (q.length) b.quiz = q; else delete b.quiz; }
+      else if (f === 'hotspots') { const h = parseHotspots(el.value); if (h.length) b.hotspots = h; else delete b.hotspots; }
+      else if (f === 'statements') b.statements = parseStatements(el.value);
+      else if (f === 'multiopts') Object.assign(b, parseMultiOptions(el.value));
+      else if (f === 'buckets') b.buckets = el.value.split(',').map((s) => s.trim()).filter(Boolean);
+      // buckets input sits above the items textarea, so b.buckets is already fresh here
+      else if (f === 'sortitems') b.items = parseSortItems(el.value, b.buckets || []);
       else b[f] = el.value;
     });
   }
@@ -685,9 +784,13 @@ function lessonForm(moduleId, lesson) {
         syncFromDOM();
         const t = btn.dataset.badd;
         const fresh = { text: { type: 'text', html: '' }, video: { type: 'video', url: '' },
+          image: { type: 'image', url: '', alt: '', caption: '' },
           code: { type: 'code', instructions: '', starter: '', expected_output: '', language: 'javascript' },
           order: { type: 'order', prompt: '', items: [] }, match: { type: 'match', prompt: '', pairs: [] },
-          blank: { type: 'blank', prompt: '', text: '' } }[t];
+          blank: { type: 'blank', prompt: '', text: '' },
+          tf: { type: 'tf', prompt: '', statements: [] },
+          multi: { type: 'multi', prompt: '', options: [], correct: [] },
+          sort: { type: 'sort', prompt: '', buckets: [], items: [] } }[t];
         blocks.push(fresh);
         draw();
       };
@@ -834,6 +937,14 @@ const IMPORT_SPECS = {
         json: '{ "type": "blank", "prompt": "Complete the sentence", "text": "The capital of France is {{Paris}}." }' },
       { type: 'code', label: 'Code playground', desc: 'A runnable JS exercise checked against a goal console output.',
         json: '{ "type": "code", "instructions": "Log the sum of 2 and 2.", "starter": "// your code here", "expected_output": "4" }' },
+      { type: 'image', label: 'Image / interactive infographic', desc: 'A picture — add "hotspots" (x/y are % from the top-left) and it becomes an exercise: learners must tap every numbered point.',
+        json: '{ "type": "image", "url": "https://example.com/diagram.png", "alt": "Brain regions", "caption": "Key brain regions", "hotspots": [{ "x": 30, "y": 40, "label": "Hippocampus", "text": "Consolidates short-term memory." }, { "x": 70, "y": 25, "label": "Frontal lobe", "text": "Planning and decisions." }] }' },
+      { type: 'tf', label: 'True / false', desc: 'Statements the learner marks true or false.',
+        json: '{ "type": "tf", "prompt": "True or false?", "statements": [{ "text": "The heart has four chambers.", "answer": true }, { "text": "Insulin raises blood sugar.", "answer": false }] }' },
+      { type: 'multi', label: 'Choose all that apply', desc: 'A multiple-choice question with SEVERAL correct answers — "correct" lists their option indexes (starting at 0).',
+        json: '{ "type": "multi", "prompt": "Which are mammals? Choose all that apply.", "options": ["Whale", "Penguin", "Bat", "Shark"], "correct": [0, 2] }' },
+      { type: 'sort', label: 'Drag into buckets', desc: 'Learners drag each item into its category bucket — "bucket" is the bucket\'s index (starting at 0).',
+        json: '{ "type": "sort", "prompt": "Sort each animal", "buckets": ["Mammal", "Bird"], "items": [{ "text": "Whale", "bucket": 0 }, { "text": "Penguin", "bucket": 1 }] }' },
     ],
   },
   assignments: {
@@ -876,12 +987,15 @@ function importModal(moduleId, kind) {
         </div>`).join('')}
       </div>
     </details>` : ''}
-    <label class="import-drop" id="import-drop">
+    <!-- deliberately a <div>, not a <label>: a label's native activation plus the
+         onclick handler both open the file dialog, so the picker appeared twice
+         and the first chosen file was lost (the "imports only on 2nd try" bug) -->
+    <div class="import-drop" id="import-drop" role="button" tabindex="0">
       ${icon('upload')}
       <strong id="import-label">Choose a file or drop it here</strong>
       <span class="drag-hint">.json · .csv · .xlsx — up to 8 MB</span>
       <input type="file" id="import-file" accept=".json,.csv,.xlsx" hidden>
-    </label>
+    </div>
     <div id="import-result" style="margin-top:14px"></div>
     <button class="btn btn-primary" style="width:100%;margin-top:14px" id="import-go" disabled>${icon('upload')} Import</button>`, kind === 'lessons');
 
@@ -898,7 +1012,8 @@ function importModal(moduleId, kind) {
     drop.classList.add('has-file');
     goBtn.disabled = false;
   };
-  drop.onclick = () => fileInput.click();
+  // clicks that bubble up from the input itself must not re-open the picker
+  drop.onclick = (e) => { if (e.target !== fileInput) fileInput.click(); };
   fileInput.onchange = () => setFile(fileInput.files[0]);
   drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('drag'); };
   drop.ondragleave = () => drop.classList.remove('drag');
@@ -1164,7 +1279,7 @@ function userImportModal() {
   let fileText = '';
   const drop = $('#user-drop');
   const fileInput = $('#user-file');
-  drop.onclick = () => fileInput.click();
+  drop.onclick = (e) => { if (e.target !== fileInput) fileInput.click(); };
   drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('drag'); };
   drop.ondragleave = () => drop.classList.remove('drag');
   drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('drag'); if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); };

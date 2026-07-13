@@ -266,7 +266,13 @@ function resumeTarget(userId) {
     const doneSet = new Set(db.prepare('SELECT lesson_id FROM lesson_progress WHERE user_id = ? AND lesson_id IN (SELECT id FROM lessons WHERE module_id = ?)').all(userId, m.id).map((r) => r.lesson_id));
     let idx = lessons.findIndex((l) => !doneSet.has(l.id));
     let label;
-    if (idx === -1) { idx = lessons.length; label = 'Final quiz'; } else label = lessons[idx].title;
+    if (idx === -1) {
+      // all lessons done → jump past the flashcards page and assignments to the quiz
+      const cardCount = db.prepare('SELECT COUNT(*) AS c FROM flashcards WHERE module_id = ?').get(m.id).c;
+      const asgCount = db.prepare('SELECT COUNT(*) AS c FROM assignments WHERE module_id = ?').get(m.id).c;
+      idx = lessons.length + (cardCount > 0 ? 1 : 0) + asgCount;
+      label = 'Final quiz';
+    } else label = lessons[idx].title;
     const { lessonsTotal, lessonsDone } = moduleProgress(userId, m.id);
     return {
       module_id: m.id, module_title: m.title, level: m.level,
@@ -530,6 +536,7 @@ route('GET', '/api/module/:id', async (req, res, p, user) => {
       return { id: q.id, question: q.question, options: opts };
     });
   const best = db.prepare('SELECT MAX(score) AS s FROM quiz_attempts WHERE user_id = ? AND module_id = ?').get(user.id, mod.id).s;
+  const flashcards = db.prepare('SELECT id, front, back FROM flashcards WHERE module_id = ? ORDER BY position, id').all(mod.id);
   const assignments = db.prepare(`
     SELECT a.id, a.title, a.instructions_html, a.points, a.position, u.name AS author_name, u.designation AS author_designation
     FROM assignments a LEFT JOIN users u ON u.id = a.created_by
@@ -549,6 +556,7 @@ route('GET', '/api/module/:id', async (req, res, p, user) => {
         author: l.author_name ? { name: l.author_name, designation: l.author_designation } : null,
       })),
       assignments,
+      flashcards,
       quiz: questions, quiz_bank_size: bankSize,
     },
   });
@@ -574,17 +582,35 @@ route('POST', '/api/lesson/:id/complete', async (req, res, p, user) => {
   const lesson = db.prepare('SELECT l.*, m.published FROM lessons l JOIN modules m ON m.id = l.module_id WHERE l.id = ?').get(p.id);
   if (!lesson || !lesson.published) return send(res, 404, { error: 'Lesson not found.' });
   if (!isOwned(user.id, lesson.module_id)) return send(res, 403, { error: 'Not enrolled in this module.' });
+  // Trial level matters: the client reports how the exercises went — flawless
+  // (no wrong tries) earns a bonus, needing reveals earns less. Base stays 10.
+  const b = await readBody(req).catch(() => ({}));
+  const trials = Math.max(0, Number(b.trials) || 0);
+  const revealed = Math.max(0, Number(b.revealed) || 0);
+  const hadExercises = Number(b.exercises) > 0;
   const r = db.prepare('INSERT OR IGNORE INTO lesson_progress (user_id, lesson_id) VALUES (?, ?)').run(user.id, p.id);
   let xpGained = 0;
-  if (r.changes > 0) { award(user.id, 'lesson_complete', 10, lesson.module_id); xpGained = 10; }
+  let flawless = false;
+  if (r.changes > 0) {
+    if (revealed > 0) xpGained = 6;
+    else if (hadExercises && trials === 0) { xpGained = 12; flawless = true; }
+    else if (trials > 4) xpGained = 8;
+    else xpGained = 10;
+    award(user.id, 'lesson_complete', xpGained, lesson.module_id);
+  }
   const completedModule = checkModuleCompletion(user.id, lesson.module_id);
-  send(res, 200, { ok: true, moduleCompleted: completedModule, xpGained, firstTime: r.changes > 0 });
+  send(res, 200, { ok: true, moduleCompleted: completedModule, xpGained, flawless, firstTime: r.changes > 0 });
 }, { auth: true });
 
 route('POST', '/api/module/:id/quiz', async (req, res, p, user) => {
   const mod = db.prepare('SELECT * FROM modules WHERE id = ? AND published = 1').get(p.id);
   if (!mod) return send(res, 404, { error: 'Module not found.' });
   if (!isOwned(user.id, mod.id)) return send(res, 403, { error: 'Not enrolled in this module.' });
+  // The final quiz only opens once every lesson is finished.
+  const prog = moduleProgress(user.id, mod.id);
+  if (prog.lessonsTotal > 0 && prog.lessonsDone < prog.lessonsTotal) {
+    return send(res, 403, { error: `Finish all lessons first — ${prog.lessonsTotal - prog.lessonsDone} still to go.`, reason: 'lessons_incomplete' });
+  }
   const { answers } = await readBody(req); // { questionId: original option index }
   const bank = db.prepare('SELECT id, correct_index FROM quiz_questions WHERE module_id = ?').all(mod.id);
   if (bank.length === 0) return send(res, 400, { error: 'This module has no quiz.' });
@@ -602,14 +628,19 @@ route('POST', '/api/module/:id/quiz', async (req, res, p, user) => {
   const score = Math.round((correct / answeredIds.length) * 100);
   const passed = score >= mod.pass_percent ? 1 : 0;
   const priorPass = !!db.prepare('SELECT 1 AS x FROM quiz_attempts WHERE user_id = ? AND module_id = ? AND passed = 1').get(user.id, mod.id);
+  const priorTries = db.prepare('SELECT COUNT(*) AS c FROM quiz_attempts WHERE user_id = ? AND module_id = ?').get(user.id, mod.id).c;
   db.prepare('INSERT INTO quiz_attempts (user_id, module_id, score, passed, answers_json) VALUES (?, ?, ?, ?, ?)')
     .run(user.id, mod.id, score, passed, JSON.stringify(answers));
-  // every attempt earns a little (effort counts); first pass earns the big
-  // bonus plus a mark-based extra so a 100% beats a scrape-through
+  // every attempt earns a little (effort counts); the first pass earns the big
+  // bonus plus a mark-based extra — and the bonus depends on the TRIAL LEVEL:
+  // passing on the 1st try pays in full, each extra attempt trims it.
   award(user.id, 'quiz_attempt', 2, mod.id);
   let xpGained = 2;
+  let trialLevel = null;
   if (passed && !priorPass) {
-    const bonus = 30 + Math.round(score / 10);
+    trialLevel = priorTries + 1; // which attempt finally passed
+    const mult = trialLevel === 1 ? 1 : trialLevel === 2 ? 0.8 : trialLevel === 3 ? 0.6 : 0.5;
+    const bonus = Math.round((30 + Math.round(score / 10)) * mult);
     award(user.id, 'quiz_pass', bonus, mod.id);
     xpGained += bonus;
   }
@@ -619,7 +650,7 @@ route('POST', '/api/module/:id/quiz', async (req, res, p, user) => {
     const i = mods.findIndex((m) => m.id === mod.id);
     return i >= 0 && mods[i + 1] ? { id: mods[i + 1].id, title: mods[i + 1].title } : null;
   })() : null;
-  send(res, 200, { score, passed: !!passed, pass_percent: mod.pass_percent, detail, moduleCompleted: completedModule, xpGained, nextModule });
+  send(res, 200, { score, passed: !!passed, pass_percent: mod.pass_percent, detail, moduleCompleted: completedModule, xpGained, trialLevel, nextModule });
 }, { auth: true });
 
 // ----- flashcard review -----
@@ -646,7 +677,45 @@ function dueReviewCards(userId) {
 }
 
 route('GET', '/api/review/queue', async (req, res, _p, user) => {
-  send(res, 200, { cards: dueReviewCards(user.id) });
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const moduleId = Number(url.searchParams.get('module')) || null;
+  const owned = ownedModuleIds(user.id);
+  // Deck chooser: every active (owned) module that has flashcards.
+  const decks = owned.length ? db.prepare(`
+    SELECT m.id, m.title, COUNT(f.id) AS cards
+    FROM modules m JOIN flashcards f ON f.module_id = m.id
+    WHERE m.id IN (${owned.map(() => '?').join(',')})
+    GROUP BY m.id ORDER BY m.position, m.id`).all(...owned) : [];
+
+  // Practice a chosen module's whole deck (random order), independent of schedule.
+  if (moduleId) {
+    if (!owned.includes(moduleId)) return send(res, 403, { error: 'Not enrolled in this module.' });
+    const cards = db.prepare(`
+      SELECT f.id, f.front, f.back, m.title AS module_title FROM flashcards f
+      JOIN modules m ON m.id = f.module_id WHERE f.module_id = ? ORDER BY RANDOM() LIMIT 20`).all(moduleId)
+      .map((c) => ({ ...c, practice: true }));
+    return send(res, 200, { cards, decks, mode: 'module' });
+  }
+
+  // Default queue: everything due, topped up with RANDOM cards from modules
+  // with recent activity so there is always something fresh to practice.
+  const cards = dueReviewCards(user.id);
+  if (cards.length < 12 && owned.length) {
+    const recent = db.prepare(`
+      SELECT DISTINCT module_id FROM activity_events
+      WHERE user_id = ? AND module_id IS NOT NULL AND day >= date('now','localtime','-14 days')`).all(user.id)
+      .map((r) => r.module_id).filter((id) => owned.includes(id));
+    const pool = recent.length ? recent : owned;
+    const seen = new Set(cards.map((c) => c.id));
+    const extras = db.prepare(`
+      SELECT f.id, f.front, f.back, m.title AS module_title FROM flashcards f
+      JOIN modules m ON m.id = f.module_id WHERE f.module_id IN (${pool.map(() => '?').join(',')})
+      ORDER BY RANDOM() LIMIT 24`).all(...pool)
+      .filter((c) => !seen.has(c.id)).slice(0, 12 - cards.length)
+      .map((c) => ({ ...c, practice: true }));
+    cards.push(...extras);
+  }
+  send(res, 200, { cards, decks, mode: 'due' });
 }, { auth: true });
 
 route('GET', '/api/quiz-history', async (req, res, _p, user) => {
@@ -656,7 +725,8 @@ route('GET', '/api/quiz-history', async (req, res, _p, user) => {
     SELECT m.id, m.title, m.pass_percent,
       (SELECT COUNT(*) FROM quiz_questions WHERE module_id = m.id) AS bank_size,
       (SELECT COUNT(*) FROM lessons WHERE module_id = m.id) AS lesson_count,
-      (SELECT COUNT(*) FROM assignments WHERE module_id = m.id) AS assignment_count
+      (SELECT COUNT(*) FROM assignments WHERE module_id = m.id) AS assignment_count,
+      (SELECT COUNT(*) FROM flashcards WHERE module_id = m.id) AS card_count
     FROM modules m WHERE m.id IN (${ids.map(() => '?').join(',')})`).all(...ids);
   const history = mods.filter((m) => m.bank_size > 0).map((m) => {
     const attempts = db.prepare('SELECT score, passed, attempted_at FROM quiz_attempts WHERE user_id = ? AND module_id = ? ORDER BY attempted_at DESC').all(user.id, m.id);
@@ -666,7 +736,8 @@ route('GET', '/api/quiz-history', async (req, res, _p, user) => {
       bestScore: attempts.length ? Math.max(...attempts.map((a) => a.score)) : null,
       passed: attempts.some((a) => a.passed),
       lastAttemptAt: attempts[0]?.attempted_at || null,
-      quiz_index: m.lesson_count + m.assignment_count,
+      // contents order: lessons, flashcards page (when cards exist), assignments, quiz
+      quiz_index: m.lesson_count + (m.card_count > 0 ? 1 : 0) + m.assignment_count,
     };
   }).sort((a, b) => (b.lastAttemptAt || '').localeCompare(a.lastAttemptAt || ''));
   send(res, 200, { history });
@@ -762,10 +833,14 @@ route('GET', '/api/palette', async (req, res, _p, user) => {
 function blocksToText(blocksJson) {
   try {
     return JSON.parse(blocksJson || '[]').map((b) => {
-      const parts = [b.html, b.summary, b.text, b.prompt, b.instructions];
-      if (Array.isArray(b.items)) parts.push(b.items.join(' '));
+      const parts = [b.html, b.summary, b.text, b.prompt, b.instructions, b.caption, b.alt];
+      if (Array.isArray(b.items)) parts.push(b.items.map((it) => (typeof it === 'string' ? it : it && it.text)).filter(Boolean).join(' '));
       if (Array.isArray(b.pairs)) parts.push(b.pairs.map((p) => `${p.l} ${p.r}`).join(' '));
       if (Array.isArray(b.quiz)) parts.push(b.quiz.map((q) => q.q).join(' '));
+      if (Array.isArray(b.statements)) parts.push(b.statements.map((s) => s.text).join(' '));
+      if (Array.isArray(b.options)) parts.push(b.options.join(' '));
+      if (Array.isArray(b.buckets)) parts.push(b.buckets.join(' '));
+      if (Array.isArray(b.hotspots)) parts.push(b.hotspots.map((h) => `${h.label} ${h.text}`).join(' '));
       return parts.filter(Boolean).join(' ');
     }).join(' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   } catch { return ''; }
@@ -1224,7 +1299,7 @@ function tableToObjects(rows) {
   return { headers, objects };
 }
 
-const BLOCK_TYPES = new Set(['text', 'video', 'code', 'order', 'match', 'blank']);
+const BLOCK_TYPES = new Set(['text', 'video', 'code', 'order', 'match', 'blank', 'image', 'tf', 'multi', 'sort']);
 const LESSON_ICONS = new Set(['book', 'play', 'code', 'zap', 'sparkle', 'trophy', 'note', 'bot']);
 function validateBlocks(blocks) {
   if (!Array.isArray(blocks)) return 'blocks must be an array.';
@@ -1233,6 +1308,38 @@ function validateBlocks(blocks) {
     if (bl.type === 'order' && (!Array.isArray(bl.items) || bl.items.length < 2)) return 'Ordering blocks need at least 2 items.';
     if (bl.type === 'match' && (!Array.isArray(bl.pairs) || bl.pairs.length < 2)) return 'Matching blocks need at least 2 pairs.';
     if (bl.type === 'blank' && !/\{\{.+?\}\}/.test(bl.text || '')) return 'Fill-in-the-blank blocks need at least one {{answer}} placeholder.';
+    if (bl.type === 'image') {
+      if (!bl.url || typeof bl.url !== 'string') return 'Image blocks need a "url".';
+      if (bl.hotspots != null) {
+        if (!Array.isArray(bl.hotspots)) return 'Image hotspots must be a list.';
+        for (const h of bl.hotspots) {
+          if (!h || !h.label || !h.text) return 'Each image hotspot needs a "label" and a "text".';
+          if (typeof h.x !== 'number' || typeof h.y !== 'number' || h.x < 0 || h.x > 100 || h.y < 0 || h.y > 100) {
+            return 'Each image hotspot needs numeric "x" and "y" positions between 0 and 100 (percent).';
+          }
+        }
+      }
+    }
+    if (bl.type === 'tf') {
+      if (!Array.isArray(bl.statements) || bl.statements.length < 1) return 'True/false blocks need at least 1 statement.';
+      for (const s of bl.statements) {
+        if (!s || !s.text || typeof s.answer !== 'boolean') return 'Each true/false statement needs "text" and a boolean "answer".';
+      }
+    }
+    if (bl.type === 'multi') {
+      if (!Array.isArray(bl.options) || bl.options.length < 2) return 'Choose-all-that-apply blocks need at least 2 options.';
+      if (!Array.isArray(bl.correct) || bl.correct.length < 1) return 'Choose-all-that-apply blocks need a "correct" list with at least 1 option index.';
+      if (bl.correct.some((c) => typeof c !== 'number' || c < 0 || c >= bl.options.length)) return 'Every "correct" entry must be a valid option index (starting at 0).';
+    }
+    if (bl.type === 'sort') {
+      if (!Array.isArray(bl.buckets) || bl.buckets.length < 2) return 'Drag-and-drop sort blocks need at least 2 buckets.';
+      if (!Array.isArray(bl.items) || bl.items.length < 2) return 'Drag-and-drop sort blocks need at least 2 items.';
+      for (const it of bl.items) {
+        if (!it || !it.text || typeof it.bucket !== 'number' || it.bucket < 0 || it.bucket >= bl.buckets.length) {
+          return 'Each sort item needs "text" and a valid "bucket" index (starting at 0).';
+        }
+      }
+    }
     if (bl.type === 'video') {
       // summary (optional string) and quiz (optional MCQ array) travel with the video
       if (bl.quiz != null) {

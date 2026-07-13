@@ -3,7 +3,8 @@
     "title": "Getting Started",
     "blocks": [
       { "type": "text", "html": "<h3>Welcome</h3><p>This is a plain <strong>text block</strong> — write any HTML you like: paragraphs, lists, bold, italics.</p>" },
-      { "type": "video", "url": "https://www.youtube.com/embed/dQw4w9WgXcQ" }
+      { "type": "video", "url": "https://www.youtube.com/embed/dQw4w9WgXcQ" },
+      { "type": "image", "url": "/assets/watermark-light.png", "alt": "NeuroSeed growth tree", "caption": "An image block — plain picture with a caption." }
     ]
   },
   {
@@ -13,6 +14,26 @@
       { "type": "blank", "prompt": "Fill in the blank", "text": "The capital of France is {{Paris}}." },
       { "type": "order", "prompt": "Put the steps in order", "items": ["Read the material", "Practice with examples", "Take the quiz"] },
       { "type": "match", "prompt": "Match the pairs", "pairs": [{ "l": "H2O", "r": "Water" }, { "l": "NaCl", "r": "Salt" }] }
+    ]
+  },
+  {
+    "title": "The New Exercise Types",
+    "blocks": [
+      { "type": "tf", "prompt": "True or false?", "statements": [
+        { "text": "The heart has four chambers.", "answer": true },
+        { "text": "Insulin raises blood sugar.", "answer": false }
+      ] },
+      { "type": "multi", "prompt": "Which of these are mammals? Choose all that apply.", "options": ["Whale", "Penguin", "Bat", "Shark"], "correct": [0, 2] },
+      { "type": "sort", "prompt": "Drag each animal into its group", "buckets": ["Mammal", "Bird"], "items": [
+        { "text": "Whale", "bucket": 0 },
+        { "text": "Penguin", "bucket": 1 },
+        { "text": "Bat", "bucket": 0 },
+        { "text": "Eagle", "bucket": 1 }
+      ] },
+      { "type": "image", "url": "/assets/watermark-light.png", "alt": "NeuroSeed growth tree", "caption": "An INTERACTIVE infographic — learners must tap every numbered hotspot.", "hotspots": [
+        { "x": 30, "y": 30, "label": "Branches", "text": "Each branch is a subject growing from the same roots." },
+        { "x": 72, "y": 42, "label": "Trunk", "text": "The core learning path every branch builds on." }
+      ] }
     ]
   }
 ]
