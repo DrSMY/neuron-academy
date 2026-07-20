@@ -24,21 +24,36 @@
       <span class="entrance-word">NeuroSeed</span>
       <span class="entrance-tag">Growth From Within</span>
     </div>
+    <button class="entrance-sound" type="button" aria-label="Turn sound on">
+      <svg class="snd-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6.5 9H3v6h3.5L11 19zM16 9l5 6m0-6-5 6"/></svg>
+      <svg class="snd-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6.5 9H3v6h3.5L11 19zM15.5 8.5a5 5 0 0 1 0 7M18.5 6a9 9 0 0 1 0 12"/></svg>
+      <span>Sound</span>
+    </button>
     <button class="entrance-skip" type="button">Skip</button>
   </div>
   <script>
     (function () {
       var el = document.getElementById('entrance');
       var video = el.querySelector('.entrance-video');
+      var soundBtn = el.querySelector('.entrance-sound');
       var dismissed = true;
 
+      function paintSound() {
+        el.classList.toggle('sound-on', !video.muted);
+        soundBtn.setAttribute('aria-label', video.muted ? 'Turn sound on' : 'Turn sound off');
+      }
       function dismiss() {
         if (dismissed) return;
         dismissed = true;
+        video.pause(); // with audio in play, hiding is not enough — stop the sound too
         el.classList.add('hide');
       }
       function reveal() { el.classList.add('show-brand'); }
-      function play() {
+      // The clip has its own soundtrack. Browsers only guarantee MUTED autoplay,
+      // so: try with sound first (allowed once the visitor has interacted with
+      // the site, and always on logo-click replays); if the browser refuses,
+      // fall back to muted and let the Sound button unmute (a real gesture).
+      function play(withSound) {
         if (!dismissed) return;
         dismissed = false;
         el.classList.remove('hide', 'show-brand');
@@ -47,8 +62,23 @@
           reveal();
           return;
         }
-        video.play().catch(reveal); // autoplay blocked (browser policy) — still give the brand its moment
+        video.muted = withSound === false;
+        paintSound();
+        video.play().catch(function () {
+          if (!video.muted) {
+            video.muted = true; // unmuted autoplay blocked — retry silent
+            paintSound();
+            video.play().catch(reveal);
+          } else reveal(); // even muted autoplay blocked — still give the brand its moment
+        });
       }
+      soundBtn.addEventListener('click', function (e) {
+        e.stopPropagation(); // toggling sound must not dismiss the splash
+        video.muted = !video.muted;
+        if (!video.muted && video.paused && !dismissed) video.play().catch(function () {});
+        localStorage.setItem('ns-intro-sound', video.muted ? '0' : '1');
+        paintSound();
+      });
       // the growth clip ends on the logo lighting up; hold there until the visitor acts
       video.addEventListener('ended', reveal);
       video.addEventListener('error', reveal);
@@ -64,7 +94,8 @@
       var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
       if (!seen && !reduced) {
         localStorage.setItem('ns-seen-intro', '1');
-        play();
+        // respect a previously chosen "sound off"; otherwise try with sound
+        play(localStorage.getItem('ns-intro-sound') !== '0');
       }
     })();
   </script>
